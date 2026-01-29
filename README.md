@@ -42,6 +42,12 @@ For production: run `npm run build`, then `npm start` to serve the built app.
 2. **Customize**: Edit `index.html` to change copy, links, or structure. Add `styles.css` and `script.js` as needed.
 3. **Integrate**: Point your MeshLink broker / gateway to this URL so that unauthenticated or new users see this page.
 
+## Scope & Stability
+
+This repository provides the reference implementation of the MeshLink broker captive portal. It is intended to be stable and infrastructure-oriented.
+
+Experimental UI/UX changes and demos live in buildwithparallel repositories.
+
 ## Technical notes
 
 - Plain HTML for the UI; no build step required.
