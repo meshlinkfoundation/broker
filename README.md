@@ -17,6 +17,25 @@ Code that supports the **captive portal UI** and **configuration** for MeshLink 
 
 The page references `styles.css` and `script.js`; add those in the same directory if you want custom styling or client-side behavior.
 
+## Running locally
+
+1. **Prerequisites**: **Node.js v18 or later** is required. Check with `node -v`. If you're on Node 16 or older:
+   - With **nvm**: `nvm install 20` then `nvm use 20`
+   - With **Homebrew**: `brew install node@20` and ensure it's on your PATH
+   - Or install the LTS version from [nodejs.org](https://nodejs.org)
+2. **Install dependencies** (from the repo root):
+   ```bash
+   npm install
+   ```
+   If you previously ran `npm install` with Node 16, remove `node_modules` first: `rm -rf node_modules && npm install`.
+3. **Start the dev server** (serves both the API and the captive portal UI):
+   ```bash
+   npm run dev
+   ```
+4. Open **http://localhost:3000** in your browser.
+
+For production: run `npm run build`, then `npm start` to serve the built app.
+
 ## How to use
 
 1. **Host the page**: Serve the repo (or at least `index.html`) from a web server that your captive-portal / MeshLink setup redirects users to.
