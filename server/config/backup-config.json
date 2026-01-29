@@ -1,0 +1,110 @@
+{
+  "nodeInfo": {
+    "name": "MeshLink_Free",
+    "location": "Downtown WiFi Hub",
+    "operator": "Community Node #142"
+  },
+  "pricing": {
+    "currency": "MESH",
+    "fiatCurrency": "USD",
+    "tiers": [
+      {
+        "id": "free",
+        "name": "Free Access",
+        "description": "Basic internet for browsing and messaging - Always free!",
+        "price": 0,
+        "fiatPrice": 0,
+        "dataLimitMB": 500,
+        "durationHours": 24,
+        "speedMbps": 1,
+        "features": [
+          "500MB daily limit",
+          "1 Mbps speed",
+          "Web browsing & messaging",
+          "Community support"
+        ],
+        "buttonText": "Connect Free",
+        "buttonColor": "green",
+        "isFree": true,
+        "isPopular": false,
+        "acceptStripePayments": false,
+        "acceptCryptoPayments": false
+      },
+      {
+        "id": "premium",
+        "name": "Premium Speed",
+        "description": "High-speed internet for streaming and downloads",
+        "price": 25,
+        "fiatPrice": 2.99,
+        "dataLimitMB": 5120,
+        "durationHours": 168,
+        "speedMbps": 100,
+        "features": [
+          "5GB weekly limit",
+          "Full speed (up to 100 Mbps)",
+          "Streaming & downloads",
+          "Priority support"
+        ],
+        "buttonText": "Pay $2.99",
+        "buttonColor": "blue",
+        "isFree": false,
+        "isPopular": true,
+        "acceptStripePayments": true,
+        "acceptCryptoPayments": true,
+        "stripePaymentLink": "https://buy.stripe.com/test_00000000000000000001"
+      },
+      {
+        "id": "unlimited",
+        "name": "Unlimited Pro",
+        "description": "Maximum performance for heavy usage",
+        "price": 100,
+        "fiatPrice": 9.99,
+        "dataLimitMB": 51200,
+        "durationHours": 720,
+        "speedMbps": "max",
+        "features": [
+          "50GB monthly limit",
+          "Maximum speed",
+          "Heavy usage & gaming",
+          "Premium support"
+        ],
+        "buttonText": "Pay $9.99",
+        "buttonColor": "purple",
+        "isFree": false,
+        "isPopular": false,
+        "acceptStripePayments": true,
+        "acceptCryptoPayments": true,
+        "stripePaymentLink": "https://buy.stripe.com/test_00000000000000000002"
+      }
+    ]
+  },
+  "network": {
+    "contractAddress": "",
+    "chainId": 10,
+    "chainName": "Optimism",
+    "rpcUrl": "https://mainnet.optimism.io"
+  },
+  "branding": {
+    "primaryColor": "#2563eb",
+    "secondaryColor": "#16a34a",
+    "logoText": "MeshLink",
+    "tagline": "Free Internet for Everyone",
+    "showCommunityBadge": true
+  },
+  "features": {
+    "enableCrypto": false,
+    "enableWalletConnection": true,
+    "requireWalletForPremium": false,
+    "showTransactionDetails": true,
+    "redirectAfterPayment": "https://www.google.com"
+  },
+  "stripe": {
+    "enabled": true,
+    "expressCheckout": true,
+    "currency": "usd"
+  },
+  "admin": {
+    "password": "change-me",
+    "dashboardEnabled": true
+  }
+}

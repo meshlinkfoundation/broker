@@ -1,0 +1,103 @@
+🧱 Approach: Use SQM/QoS + IPtables Marks by Client IP/MAC
+This lets you:
+
+Automatically assign bandwidth tiers per user
+
+Control access by IP or MAC
+
+Dynamically change tiers via script/API
+
+🎯 How It Works:
+Tier	Policy	Implementation
+Free	Limited bandwidth (e.g. 1 Mbps), time cap	SQM + firewall rules
+Paid	High-speed (e.g. 50 Mbps), no limits	SQM with higher priority class
+
+🔧 1. Tag Clients by IP or MAC
+Use the captive portal backend to:
+
+Assign static IP or reserve DHCP lease per MAC
+
+Store tier info (free/premium)
+
+Update /etc/config/dhcp:
+
+bash
+Copy
+Edit
+config host
+  option name 'user1'
+  option mac '12:34:56:78:9a:bc'
+  option ip '192.168.1.100'
+🚦 2. Define Bandwidth Policies with SQM
+Install SQM:
+
+bash
+Copy
+Edit
+opkg update && opkg install sqm-scripts
+Create profiles:
+
+bash
+Copy
+Edit
+# /etc/config/sqm
+config queue 'free_tier'
+  option interface 'br-lan'
+  option download '1000'
+  option upload '500'
+  option debug_logging '0'
+  option verbosity '5'
+  option enabled '1'
+  list ipset 'free_clients'
+
+config queue 'paid_tier'
+  option interface 'br-lan'
+  option download '50000'
+  option upload '10000'
+  list ipset 'paid_clients'
+🔁 3. Classify Traffic with iptables + ipsets
+Create sets:
+
+bash
+Copy
+Edit
+ipset create free_clients hash:ip
+ipset create paid_clients hash:ip
+Add clients to sets:
+
+bash
+Copy
+Edit
+ipset add free_clients 192.168.1.100
+ipset add paid_clients 192.168.1.101
+Use firewall rules to apply marks for SQM:
+
+bash
+Copy
+Edit
+iptables -t mangle -A PREROUTING -m set --match-set free_clients src -j MARK --set-mark 10
+iptables -t mangle -A PREROUTING -m set --match-set paid_clients src -j MARK --set-mark 20
+🧠 4. Automate Tier Assignment from Backend
+Your captive portal backend (on payment):
+
+Detects user IP
+
+Sends SSH/API request to OpenWRT
+
+Adds IP to paid_clients
+
+Restarts SQM or marks
+
+🔄 5. Optional: Enforce Time Limits
+You can use:
+
+Cron jobs + iptables to re-lock access
+
+Local script to remove IP from paid_clients after 1 hour
+
+Example:
+
+bash
+Copy
+Edit
+sleep 3600 && ipset del paid_clients 192.168.1.101

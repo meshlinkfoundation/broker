@@ -1,0 +1,125 @@
+Abstract
+MeshLink is a decentralized protocol that aims to provide free internet access for everyone, powered by a peer-to-peer mesh network. Using blockchain technology, MeshLink enables individuals to share and monetize their internet connectivity, creating a global community-driven alternative to traditional ISPs. At its core, MeshLink offers a free base level of internet access for all users, while those seeking prioritized or faster connectivity can pay via Mesh tokens. By empowering individuals with everyday devices to become node operators, MeshLink is on a mission to make affordable, reliable internet a universal right—not a privilege.
+
+Unlike highly governed protocols like helium. MeshLink does not reside between clients and gateways and as a result node operators can price and market their wares at prices that make sense to them and their constituents.
+
+
+
+
+Open Source
+No monthly subscriptions
+Free internet for all
+Goodbye BigTelcos
+
+
+The Mesh
+
+
+
+Clients
+
+Cellular
+
+ISP
+
+
+
+
+
+Nodes
+
+Reputation System
+
+Pricing, offer A/B testing
+
+Raspberry Pi 5
+
+WiFi
+Airports
+cars?
+
+Summary: Setting Up and Supporting Clients with a Wi-Fi-Based MeshLink Node
+A MeshLink node operator can easily set up their Raspberry Pi-based node to share their internet connection via Wi-Fi, providing decentralized access to clients. Here’s a step-by-step summary of the process:
+
+1. Setting Up the Node
+Hardware Setup
+Obtain a Raspberry Pi:
+Use a Raspberry Pi 4 or similar model with good performance and built-in Wi-Fi.
+Add a High-Performance Wi-Fi Adapter:
+Use a USB Wi-Fi adapter with external antenna support for extended range (e.g., Alfa AWUS036ACH).
+Attach External Antennas (Optional):
+Connect a directional or omnidirectional antenna to improve range (e.g., TP-Link TL-ANT2415D).
+Software Setup
+Install the MeshLink Node Software:
+Download and install the open-source MeshLink node software on the Raspberry Pi.
+The software will manage network sharing, client authentication, and token transactions.
+Configure the Network:
+Set up a Wi-Fi hotspot using the node’s software or a Wi-Fi management tool like hostapd.
+Name the network something identifiable, like MeshLink_Free.
+Enable a captive portal for client onboarding and payment processing.
+
+2. Supporting Clients
+Client Onboarding
+Free Access:
+Clients connect to the MeshLink_Free Wi-Fi network.
+Upon connection, they are redirected to a captive portal where they can:
+Click "Connect" for free internet (limited speed/data).
+Learn about MeshLink and the option to upgrade to premium.
+Premium Access:
+Clients can pay for faster speeds or unlimited data using Mesh tokens.
+Payments are processed through the MeshLink app or by scanning a QR code on the portal.
+Bandwidth Management
+Traffic Shaping:
+Use tools like wondershaper or built-in MeshLink features to allocate bandwidth:
+Free users: ~1 Mbps speed, limited to 500 MB/day.
+Premium users: Full bandwidth up to ISP plan limits.
+Connection Limits:
+Set limits on the number of simultaneous clients to prevent overloading.
+
+3. Maintenance and Monitoring
+Node Monitoring:
+Use the MeshLink dashboard to track node performance:
+Bandwidth usage.
+Number of connected clients.
+Earnings in Mesh tokens.
+Hardware Maintenance:
+Ensure the Raspberry Pi and Wi-Fi adapter are in a well-ventilated, weather-protected area if deployed outdoors.
+Customer Support:
+Provide basic troubleshooting via the captive portal or MeshLink community channels (e.g., Discord).
+
+4. Scaling and Expanding
+Add additional Raspberry Pi nodes to improve coverage in large buildings or outdoor areas.
+Use mesh Wi-Fi configurations to link multiple nodes seamlessly.
+Upgrade to high-gain antennas or directional setups for longer-range deployments.
+
+Expected Benefits
+For Clients:
+Free basic internet for browsing and messaging.
+Premium options for better performance, paid with Mesh tokens.
+For Node Operators:
+Earn Mesh tokens for sharing bandwidth.
+Support a decentralized, community-driven network.
+
+
+Cellular
+
+
+Free and Premiurm Links
+
+
+
+
+Economics
+
+
+Multi Modal Revenue Streams
+
+Entry nodes get paid directly 
+
+
+
+
+
+
+
+

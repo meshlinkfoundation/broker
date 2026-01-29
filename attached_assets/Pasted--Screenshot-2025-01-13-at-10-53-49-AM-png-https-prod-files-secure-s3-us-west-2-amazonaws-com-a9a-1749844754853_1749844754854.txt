@@ -1,0 +1,410 @@
+![Screenshot 2025-01-13 at 10.53.49 AM.png](https://prod-files-secure.s3.us-west-2.amazonaws.com/a9afe6ef-6007-435f-8283-f99d4bad2f1c/43344873-e7a4-48b2-b503-fedbc1311a66/Screenshot_2025-01-13_at_10.53.49_AM.png)
+
+**Steps**
+
+Raspberry pi must have ethernet uplink
+
+use rpi imager
+
+Go Here
+
+https://firmware-selector.openwrt.org/?version=SNAPSHOT&target=bcm27xx%2Fbcm2712&id=rpi-5
+
+22.03.6
+
+![image.png](attachment:5b76c465-09b1-46d1-afde-5f748b496405:image.png)
+
+[openwrt-24.10.1-c571392b3a0b-bcm27xx-bcm2712-rpi-5-ext4-factory (3).img.gz](attachment:128c1f17-c596-4b54-9acc-6e2c2cde66d0:openwrt-24.10.1-c571392b3a0b-bcm27xx-bcm2712-rpi-5-ext4-factory_(3).img.gz)
+
+UCI Defaults
+
+```jsx
+# Beware! This script will be in /rom/etc/uci-defaults/ as part of the image.
+# Uncomment lines to apply:
+#
+wlan_name="Meshlink"
+wlan_password="subscribe"
+#
+root_password="subscribe"
+lan_ip_address="192.168.1.3"
+#
+# pppoe_username=""
+# pppoe_password=""
+
+# log potential errors
+exec >/tmp/setup.log 2>&1
+
+if [ -n "$root_password" ]; then
+  (echo "$root_password"; sleep 1; echo "$root_password") | passwd > /dev/null
+fi
+
+# Configure LAN
+# More options: https://openwrt.org/docs/guide-user/base-system/basic-networking
+if [ -n "$lan_ip_address" ]; then
+  uci set network.lan.ipaddr="$lan_ip_address"
+  uci commit network
+fi
+
+# Configure WLAN
+# More options: https://openwrt.org/docs/guide-user/network/wifi/basic#wi-fi_interfaces
+if [ -n "$wlan_name" -a -n "$wlan_password" -a ${#wlan_password} -ge 8 ]; then
+  uci set wireless.@wifi-device[0].disabled='0'
+  uci set wireless.@wifi-iface[0].disabled='0'
+  uci set wireless.@wifi-iface[0].encryption='psk2'
+  uci set wireless.@wifi-iface[0].ssid="$wlan_name"
+  uci set wireless.@wifi-iface[0].key="$wlan_password"
+  uci commit wireless
+fi
+
+# Configure PPPoE
+# More options: https://openwrt.org/docs/guide-user/network/wan/wan_interface_protocols#protocol_pppoe_ppp_over_ethernet
+if [ -n "$pppoe_username" -a "$pppoe_password" ]; then
+  uci set network.wan.proto=pppoe
+  uci set network.wan.username="$pppoe_username"
+  uci set network.wan.password="$pppoe_password"
+  uci commit network
+fi
+
+echo "All done!"
+
+```
+
+installed packages
+
+```jsx
+
+base-files bcm27xx-gpu-fw bcm27xx-utils ca-bundle dnsmasq dropbear e2fsprogs firewall4 fstools kmod-fs-vfat kmod-nft-offload kmod-nls-cp437 kmod-nls-iso8859-1 kmod-sound-arm-bcm2835 kmod-sound-core kmod-usb-hid libc libgcc libustream-mbedtls logd mkf2fs mtd netifd nftables odhcp6c odhcpd-ipv6only opkg partx-utils ppp ppp-mod-pppoe procd-ujail uci uclient-fetch urandom-seed cypress-firmware-43455-sdio brcmfmac-nvram-43455-sdio kmod-brcmfmac wpad-basic-mbedtls kmod-hwmon-pwmfan kmod-thermal iwinfo luci opkg coreutils bash wget curl iptables-mod-nat-extra luci-ssl nodogsplash
+```
+
+24.10.1
+
+Captie Portal
+
+opkg update
+opkg install nodogsplash
+
+Protocol
+
+MeshLink
+
+https://reticulum.network/
+
+Token
+
+MESH
+
+Reddit:
+
+https://www.reddit.com/r/MeshLink/
+
+Raspberry Pi Credentials
+
+subscribe
+
+subscribe
+
+```jsx
+# Beware! This script will be in /rom/etc/uci-defaults/ as part of the image.
+# Uncomment lines to apply:
+wlan_name="OpenWrt"
+wlan_password="subscribe"
+root_password=""
+lan_ip_address="192.168.1.3"
+pppoe_username="subscribe"
+pppoe_password="subscribe"
+
+# log potential errors
+exec >/tmp/setup.log 2>&1
+
+# Set root password (if provided)
+if [ -n "$root_password" ]; then
+  (echo "$root_password"; sleep 1; echo "$root_password") | passwd > /dev/null
+fi
+
+# Configure LAN IP address
+if [ -n "$lan_ip_address" ]; then
+  uci set network.lan.ipaddr="$lan_ip_address"
+  uci set network.lan.proto='static'
+  uci set network.lan.netmask='255.255.255.0'
+  uci commit network
+fi
+
+# Configure WLAN (prefer 5GHz if radio1 exists)
+if [ -n "$wlan_name" ] && [ -n "$wlan_password" ] && [ ${#wlan_password} -ge 8 ]; then
+  if uci show wireless | grep -q radio1; then
+    device="radio1"
+  else
+    device="radio0"
+  fi
+
+  uci set wireless.$device.disabled='0'
+
+  # Create or modify first Wi-Fi interface
+  uci set wireless.@wifi-iface[0].device="$device"
+  uci set wireless.@wifi-iface[0].network='lan'
+  uci set wireless.@wifi-iface[0].mode='ap'
+  uci set wireless.@wifi-iface[0].ssid="$wlan_name"
+  uci set wireless.@wifi-iface[0].encryption='psk2'
+  uci set wireless.@wifi-iface[0].key="$wlan_password"
+  uci set wireless.@wifi-iface[0].disabled='0'
+  uci commit wireless
+fi
+
+# Configure PPPoE WAN (if provided)
+if [ -n "$pppoe_username" ] && [ -n "$pppoe_password" ]; then
+  uci set network.wan.proto='pppoe'
+  uci set network.wan.username="$pppoe_username"
+  uci set network.wan.password="$pppoe_password"
+  uci commit network
+fi
+
+# Print applied config for debugging
+echo "--- Network ---"
+uci show network
+echo "--- Wireless ---"
+uci show wireless
+
+echo "All done!"
+
+```
+
+MeshLink
+
+subscribe
+
+## Action Items
+
+- [x]  Create GitHub space, make it open source.
+- [x]  Finalize name and Branding
+- [ ]  create logo
+- [ ]  Create a website with key sections:
+- Overview of the project.
+- Whitepaper and roadmap.
+- Community links (Discord, Telegram, Reddit).
+    - ~~Reddit Community~~
+    - ~~Discord~~
+    - ~~X.com~~
+- [ ]  develop YouTube strategy
+- [ ]  Design the core bandwidth-sharing protocol.
+- [ ]  Build the MVP node software (v1):
+- Compatibility with Raspberry Pi, phones, and PCs.
+- Basic bandwidth sharing and monitoring.
+
+Deploy smart contracts for:
+
+- Token creation (on Polygon).
+- Rewards distribution.
+- Premium service payments.
+- Set up an initial testnet for internal testing.
+
+### **Tokenomics**
+
+- [ ]  Design the tokenomics model:
+    - Total supply, allocation (e.g., 20% for the foundation), staking rewards, etc.
+- [ ]  Set up the token launch and treasury wallet.
+
+### **Pilot in Your Building**
+
+- [ ]  Install a small network for your building.
+- [ ]  Incentivize early adopters with token rewards.
+- [ ]  Gather feedback from residents to refine the MVP.
+
+### **Network Scaling**
+
+- [ ]  Deploy the network in Brickell, focusing on high-density residential and commercial areas.
+- [ ]  Set up premium relay nodes for consistent coverage.
+- [ ]  Begin distributing pre-configured node hardware.
+
+- [ ]  Launch a referral program to reward early adopters and node operators with tokens.
+- [ ]  Host local tech events or hackathons in partnership with Miami tech communities.
+- [ ]  Create regular YouTube content documenting progress and success stories.
+
+- [ ]  Offer free basic access but introduce token-based premium services (e.g., low-latency gaming/streaming).
+- [ ]  Collect usage and token transaction data to validate tokenomics.
+
+### **Comprehensive Checklist for Launching Your Decentralized ISP Project**
+
+---
+
+### **Phase 1: Foundation and MVP (Months 1-3)**
+
+### **Project Setup**
+
+- [ ]  Finalize the name and branding of the project.
+- [ ]  Create a website with key sections:
+    - Overview of the project.
+    - Whitepaper and roadmap.
+    - Community links (Discord, Telegram, Reddit).
+- [ ]  Announce the project on your YouTube channel with an engaging explainer video.
+
+### **Technical Development**
+
+- [ ]  Design the core bandwidth-sharing protocol.
+- [ ]  Build the MVP node software (v1):
+    - Compatibility with Raspberry Pi, phones, and PCs.
+    - Basic bandwidth sharing and monitoring.
+- [ ]  Deploy smart contracts for:
+    - Token creation (on Polygon).
+    - Rewards distribution.
+    - Premium service payments.
+- [ ]  Set up an initial testnet for internal testing.
+
+### **Tokenomics**
+
+- [ ]  Design the tokenomics model:
+    - Total supply, allocation (e.g., 20% for the foundation), staking rewards, etc.
+- [ ]  Set up the token launch and treasury wallet.
+
+### **Pilot in Your Building**
+
+- [ ]  Install a small network for your building.
+- [ ]  Incentivize early adopters with token rewards.
+- [ ]  Gather feedback from residents to refine the MVP.
+
+---
+
+### **Phase 2: Brickell Expansion (Months 4-6)**
+
+### **Network Scaling**
+
+- [ ]  Deploy the network in Brickell, focusing on high-density residential and commercial areas.
+- [ ]  Set up premium relay nodes for consistent coverage.
+- [ ]  Begin distributing pre-configured node hardware.
+
+### **Marketing**
+
+- [ ]  Launch a referral program to reward early adopters and node operators with tokens.
+- [ ]  Host local tech events or hackathons in partnership with Miami tech communities.
+- [ ]  Create regular YouTube content documenting progress and success stories.
+
+### **Technical Refinement**
+
+- [ ]  Upgrade the node software (v2):
+    - Add dynamic bandwidth allocation.
+    - Introduce basic fraud detection and security measures.
+- [ ]  Expand testnet to pilot users and monitor real-world performance.
+
+### **Monetization**
+
+- [ ]  Offer free basic access but introduce token-based premium services (e.g., low-latency gaming/streaming).
+- [ ]  Collect usage and token transaction data to validate tokenomics.
+
+---
+
+### **Phase 3: Miami-Wide Growth (Months 7-9)**
+
+### **Community Growth**
+
+- [ ]  Partner with local influencers and tech media to promote the project.
+- [ ]  Recruit co-working spaces, apartment buildings, and small businesses to host nodes.
+- [ ]  Incentivize businesses to offer node-powered public Wi-Fi.
+
+### **Product Development**
+
+- [ ]  Launch mobile apps for easy participation (phone tethering support).
+- [ ]  Upgrade node software (v3) with:
+    - Latency optimization for premium users.
+    - Gamification features (e.g., real-time token earnings display).
+
+### **Token Ecosystem**
+
+- [ ]  Enable staking for token holders to earn passive income.
+- [ ]  Integrate the token with DeFi platforms (liquidity pools, lending protocols).
+
+### **Performance Monitoring**
+
+- [ ]  Launch an admin dashboard to track network activity and adoption metrics.
+- [ ]  Address bottlenecks in bandwidth distribution and user experience.
+
+### **Regional Growth**
+
+- [ ]  Expand to Tampa, Orlando, Fort Lauderdale, and other key cities.
+- [ ]  Recruit local ambassadors to promote adoption in new regions.
+- [ ]  Offer higher token rewards for early adopters in each new city.
+
+### **Business Partnerships**
+
+- [ ]  Approach businesses to pay for premium services with guaranteed uptime.
+- [ ]  Partner with local governments to provide public Wi-Fi using nodes.
+
+### **Token Growth**
+
+- [ ]  List the token on additional crypto exchanges to increase liquidity.
+- [ ]  Begin periodic token burns based on network revenue.
+
+### **National Scaling**
+
+- [ ]  Target key tech hubs like Austin, San Francisco, and NYC.
+- [ ]  Build relationships with high-profile influencers and early crypto adopters.
+
+### **Global Rollout**
+
+- [ ]  Expand to underserved regions with high mobile penetration:
+    - Focus on Southeast Asia, Africa, and Latin America.
+- [ ]  Partner with satellite providers to extend coverage to remote areas.
+
+### **Advanced Features**
+
+- [ ]  Optimize the protocol for global scalability (edge computing, localized routing).
+- [ ]  Introduce advanced fraud detection systems and AI-driven optimizations.
+
+### **Ongoing Tasks**
+
+### **Community and Marketing**
+
+- [ ]  Maintain active engagement on Discord, Telegram, and social media.
+- [ ]  Regularly update the community on milestones and progress.
+- [ ]  Highlight testimonials and success stories to build trust.
+
+### **Innovation and IP**
+
+- [ ]  Consult a patent attorney to identify patentable innovations:
+    - Bandwidth-sharing protocol.
+    - Dynamic bandwidth allocation.
+    - Fraud detection mechanisms.
+- [ ]  File patents for critical innovations.
+
+### **Governance**
+
+- [ ]  Roll out a token-based governance system for the community.
+- [ ]  Allow token holders to vote on protocol changes and resource allocation.
+
+- [ ]  Relevant Reddit Communities
+
+https://store.ui.com/us/en?category=all-60ghz-wireless&s=us&l=en
+
+Free Internet
+
+Token: Mesh
+
+Democratize the airwaves
+
+Goal:
+
+Replace Traditional ISPs with a web3 decentralized solution that utilizes a native token which I own much of.
+
+This is interesting. few things I would love to see in the future,
+
+- fastest and easies way to connect one devices with multiple devices.
+- 1 R1 device for main (act as main business). another R1 for clients (multiple devices can connect anywhere within 5-10km radius)
+- API for main business to send notifications to subscribers (clients)
+
+![image.png](https://prod-files-secure.s3.us-west-2.amazonaws.com/a9afe6ef-6007-435f-8283-f99d4bad2f1c/b5cb64ef-a7ed-4452-a19e-23d6dec309f0/image.png)
+
+What is Free?
+
+![image.png](https://prod-files-secure.s3.us-west-2.amazonaws.com/a9afe6ef-6007-435f-8283-f99d4bad2f1c/2f504e13-3210-4dcd-9c14-21aaca411ded/image.png)
+
+Open Source
+
+Need to easily push to GtiHub
+
+Feedback
+
+need reddit account and space for it
+
+Free speech and take feedback
+
+Get that Coin Live
+
+[YouTube Marketing](https://www.notion.so/YouTube-Marketing-17a938546f628081b83fe8cff3f6dcdd?pvs=21)
