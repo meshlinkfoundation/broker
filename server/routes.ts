@@ -51,9 +51,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           enabled: config.stripe?.enabled || false,
           expressCheckout: config.stripe?.expressCheckout || false,
           currency: config.stripe?.currency || "usd"
+        },
+        // Include new payments section with fallback to legacy fields for backward compatibility
+        payments: config.payments || {
+          stripe: {
+            enabled: config.stripe?.enabled || false,
+            paymentMethods: ["card"],
+            currency: config.stripe?.currency || "usd"
+          },
+          crypto: {
+            enabled: config.features?.enableCrypto || false,
+            network: config.network || {
+              chainId: 10,
+              chainName: "Optimism",
+              rpcUrl: "https://mainnet.optimism.io",
+              contractAddress: "0x0000000000000000000000000000000000000000",
+              tokenSymbol: "MESH",
+              tokenDecimals: 18
+            }
+          }
         }
       };
-      
+
       res.json(publicConfig);
     } catch (error) {
       console.error("Config loading error:", error);

@@ -7,14 +7,17 @@ import { WalletConnect } from "@/components/wallet-connect";
 import { useWallet } from "@/hooks/use-wallet";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
-import { 
-  Wifi, 
-  Users, 
-  Globe, 
+import {
+  Wifi,
+  Users,
+  Globe,
   ArrowRight,
   CheckCircle,
   Clock,
-  Shield
+  Shield,
+  CreditCard,
+  Wallet,
+  Smartphone
 } from "lucide-react";
 import { web3Provider } from "@/lib/web3-mock";
 
@@ -35,6 +38,27 @@ interface ConfigTier {
   acceptStripePayments: boolean;
   acceptCryptoPayments: boolean;
   stripePaymentLink?: string;
+}
+
+interface CryptoNetworkConfig {
+  chainId: number;
+  chainName: string;
+  rpcUrl: string;
+  contractAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+}
+
+interface PaymentsConfig {
+  stripe: {
+    enabled: boolean;
+    paymentMethods: Array<'card' | 'apple_pay' | 'google_pay' | 'link'>;
+    currency: string;
+  };
+  crypto: {
+    enabled: boolean;
+    network: CryptoNetworkConfig;
+  };
 }
 
 interface NodeConfig {
@@ -73,6 +97,7 @@ interface NodeConfig {
     expressCheckout: boolean;
     currency: string;
   };
+  payments?: PaymentsConfig;
 }
 
 export default function CaptivePortal() {
@@ -222,18 +247,21 @@ export default function CaptivePortal() {
         return;
       }
 
+      // Use payments.crypto.network with fallback to top-level network
+      const cryptoNetwork = config!.payments?.crypto?.network ?? config!.network;
+
       // Check if on correct network
-      if (wallet.chainId !== config!.network.chainId) {
+      if (wallet.chainId !== cryptoNetwork.chainId) {
         try {
-          await switchNetwork(config!.network.chainId);
+          await switchNetwork(cryptoNetwork.chainId);
           toast({
             title: "Network Switched",
-            description: `Switched to ${config!.network.chainName} for crypto payments.`,
+            description: `Switched to ${cryptoNetwork.chainName} for crypto payments.`,
           });
         } catch (error) {
           toast({
             title: "Network Switch Failed",
-            description: `Please manually switch to ${config!.network.chainName} network.`,
+            description: `Please manually switch to ${cryptoNetwork.chainName} network.`,
             variant: "destructive",
           });
           return;
@@ -366,7 +394,9 @@ export default function CaptivePortal() {
 
   const processCryptoPayment = async (tier: ConfigTier) => {
     const amount = tier.price.toString();
-    
+    // Use payments.crypto.network with fallback to top-level network
+    const cryptoNetwork = config!.payments?.crypto?.network ?? config!.network;
+
     try {
       setPaymentStep('paying');
       setIsConnecting(true);
@@ -376,7 +406,7 @@ export default function CaptivePortal() {
 
       const transaction = await web3Provider.sendTransaction({
         from: wallet.address!,
-        to: config!.network.contractAddress,
+        to: cryptoNetwork.contractAddress,
         value: amount,
         gasPrice: currentNetwork?.gasPrice || "20000000000",
         gasLimit: "100000",
@@ -532,7 +562,7 @@ export default function CaptivePortal() {
                   {currentNetwork.name}
                 </Badge>
               )}
-              {config.features.enableCrypto && config.features.enableWalletConnection && <WalletConnect />}
+              {(config.payments?.crypto?.enabled ?? config.features.enableCrypto) && config.features.enableWalletConnection && <WalletConnect />}
             </div>
           </div>
           <div className="text-center pb-4">
@@ -582,29 +612,36 @@ export default function CaptivePortal() {
             </div>
 
             {/* Smart Contract Info */}
-            {config.features.enableCrypto && wallet.isConnected && config.features.showTransactionDetails && (
-              <div className="mb-8">
-                <Card className="bg-blue-50 border-blue-200">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-3">
-                        <Shield className="w-5 h-5 text-blue-600" />
-                        <div>
-                          <h3 className="font-semibold text-blue-900">Smart Contract Ready</h3>
-                          <p className="text-sm text-blue-700">Connected to {config.network.chainName}</p>
+            {(() => {
+              const cryptoEnabled = config.payments?.crypto?.enabled ?? config.features.enableCrypto;
+              const cryptoNetwork = config.payments?.crypto?.network ?? config.network;
+
+              if (!cryptoEnabled || !wallet.isConnected || !config.features.showTransactionDetails) return null;
+
+              return (
+                <div className="mb-8">
+                  <Card className="bg-blue-50 border-blue-200">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <Shield className="w-5 h-5 text-blue-600" />
+                          <div>
+                            <h3 className="font-semibold text-blue-900">Smart Contract Ready</h3>
+                            <p className="text-sm text-blue-700">Connected to {cryptoNetwork.chainName}</p>
+                          </div>
                         </div>
+                        <Badge className="bg-blue-600 text-white">
+                          {currentNetwork?.name || cryptoNetwork.chainName}
+                        </Badge>
                       </div>
-                      <Badge className="bg-blue-600 text-white">
-                        {currentNetwork?.name || config.network.chainName}
-                      </Badge>
-                    </div>
-                    <div className="mt-3 text-xs text-blue-600 font-mono bg-white/50 rounded p-2 break-all">
-                      Contract: {config.network.contractAddress}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
+                      <div className="mt-3 text-xs text-blue-600 font-mono bg-white/50 rounded p-2 break-all">
+                        Contract: {cryptoNetwork.contractAddress}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              );
+            })()}
 
             {/* Plans */}
             <div className={`grid gap-6 mb-12 ${
@@ -634,7 +671,7 @@ export default function CaptivePortal() {
                       {tier.isFree ? '$0' : (
                         <>
                           <div>${tier.fiatPrice}</div>
-                          {config.features.enableCrypto && tier.acceptCryptoPayments && (
+                          {(config.payments?.crypto?.enabled ?? config.features.enableCrypto) && tier.acceptCryptoPayments && (
                             <div className="text-sm font-normal opacity-75">
                               or {tier.price} {config.pricing.currency}
                             </div>
@@ -679,33 +716,94 @@ export default function CaptivePortal() {
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">
-                {config.pricing.tiers.find(t => t.id === selectedPlan)?.acceptStripePayments && config.stripe.enabled && (
-                  <Button 
-                    className="w-full bg-purple-600 hover:bg-purple-700 text-white"
-                    onClick={() => handlePaymentMethodSelect('stripe')}
-                  >
-                    💳 Pay with Card - ${config.pricing.tiers.find(t => t.id === selectedPlan)?.fiatPrice}
-                  </Button>
-                )}
-                
-                {config.features.enableCrypto && config.pricing.tiers.find(t => t.id === selectedPlan)?.acceptCryptoPayments && (
-                  <Button 
-                    className="w-full bg-orange-600 hover:bg-orange-700 text-white"
-                    onClick={() => handlePaymentMethodSelect('crypto')}
-                  >
-                    🔗 Pay with Crypto - {config.pricing.tiers.find(t => t.id === selectedPlan)?.price} {config.pricing.currency}
-                  </Button>
-                )}
-                
-                <Button 
-                  variant="outline" 
+                {/* Stripe Payment Methods */}
+                {(() => {
+                  const tier = config.pricing.tiers.find(t => t.id === selectedPlan);
+                  const stripeEnabled = config.payments?.stripe?.enabled ?? config.stripe.enabled;
+                  const paymentMethods = config.payments?.stripe?.paymentMethods ?? ['card'];
+
+                  if (!tier?.acceptStripePayments || !stripeEnabled) return null;
+
+                  return (
+                    <div className="space-y-2">
+                      <p className="text-sm text-gray-500 font-medium">Pay ${tier.fiatPrice}</p>
+
+                      {paymentMethods.includes('card') && (
+                        <Button
+                          className="w-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-2"
+                          onClick={() => handlePaymentMethodSelect('stripe')}
+                        >
+                          <CreditCard className="w-5 h-5" />
+                          Credit / Debit Card
+                        </Button>
+                      )}
+
+                      {paymentMethods.includes('apple_pay') && (
+                        <Button
+                          className="w-full bg-black hover:bg-gray-800 text-white flex items-center justify-center gap-2"
+                          onClick={() => handlePaymentMethodSelect('stripe')}
+                        >
+                          <Smartphone className="w-5 h-5" />
+                          Apple Pay
+                        </Button>
+                      )}
+
+                      {paymentMethods.includes('google_pay') && (
+                        <Button
+                          className="w-full bg-white hover:bg-gray-100 text-gray-800 border border-gray-300 flex items-center justify-center gap-2"
+                          onClick={() => handlePaymentMethodSelect('stripe')}
+                        >
+                          <Wallet className="w-5 h-5" />
+                          Google Pay
+                        </Button>
+                      )}
+
+                      {paymentMethods.includes('link') && (
+                        <Button
+                          className="w-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2"
+                          onClick={() => handlePaymentMethodSelect('stripe')}
+                        >
+                          <ArrowRight className="w-5 h-5" />
+                          Pay with Link
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Crypto Payment Option */}
+                {(() => {
+                  const tier = config.pricing.tiers.find(t => t.id === selectedPlan);
+                  const cryptoEnabled = config.payments?.crypto?.enabled ?? config.features.enableCrypto;
+                  const cryptoNetwork = config.payments?.crypto?.network ?? config.network;
+
+                  if (!tier?.acceptCryptoPayments || !cryptoEnabled) return null;
+
+                  return (
+                    <div className="space-y-2 pt-2 border-t border-gray-200">
+                      <p className="text-sm text-gray-500 font-medium">
+                        Or pay {tier.price} {config.pricing.currency} on {cryptoNetwork.chainName}
+                      </p>
+                      <Button
+                        className="w-full bg-orange-600 hover:bg-orange-700 text-white flex items-center justify-center gap-2"
+                        onClick={() => handlePaymentMethodSelect('crypto')}
+                      >
+                        <Wallet className="w-5 h-5" />
+                        Pay with Crypto
+                      </Button>
+                    </div>
+                  );
+                })()}
+
+                <Button
+                  variant="outline"
                   className="w-full"
                   onClick={() => {
                     setPaymentStep('select');
                     setSelectedPlan(null);
                   }}
                 >
-                  ← Back to Plans
+                  Back to Plans
                 </Button>
               </CardContent>
             </Card>
@@ -731,12 +829,16 @@ export default function CaptivePortal() {
             )}
 
             {/* Payment Processing */}
-            {(paymentStep === 'paying' || paymentStep === 'confirming' || paymentStep === 'complete') && (
+            {(paymentStep === 'paying' || paymentStep === 'confirming' || paymentStep === 'complete') && (() => {
+              const cryptoEnabled = config.payments?.crypto?.enabled ?? config.features.enableCrypto;
+              const cryptoNetwork = config.payments?.crypto?.network ?? config.network;
+
+              return (
               <Card>
                 <CardHeader className="text-center">
                   <CardTitle className="text-blue-700">Processing Payment</CardTitle>
                   <p className="text-gray-600">
-                    {paymentMethod === 'stripe' ? 'Secure card payment' : (config.features.enableCrypto ? `Secure transaction on ${config.network.chainName}` : 'Processing payment')}
+                    {paymentMethod === 'stripe' ? 'Secure card payment' : (cryptoEnabled ? `Secure transaction on ${cryptoNetwork.chainName}` : 'Processing payment')}
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -745,27 +847,27 @@ export default function CaptivePortal() {
                       <div>
                         <label className="text-gray-600">Payment Method</label>
                         <div className="font-medium">
-                          {paymentMethod === 'stripe' ? 'Credit Card' : (config.features.enableCrypto ? 'Cryptocurrency' : 'Alternative Payment')}
+                          {paymentMethod === 'stripe' ? 'Credit Card' : (cryptoEnabled ? 'Cryptocurrency' : 'Alternative Payment')}
                         </div>
                       </div>
                       <div>
                         <label className="text-gray-600">Amount</label>
                         <div className="font-medium">
-                          {paymentMethod === 'stripe' 
+                          {paymentMethod === 'stripe'
                             ? `$${config.pricing.tiers.find(t => t.id === selectedPlan)?.fiatPrice || 0}`
                             : `${config.pricing.tiers.find(t => t.id === selectedPlan)?.price || 0} ${config.pricing.currency}`
                           }
                         </div>
                       </div>
-                      {paymentMethod === 'crypto' && config.features.enableCrypto && (
+                      {paymentMethod === 'crypto' && cryptoEnabled && (
                         <>
                           <div>
                             <label className="text-gray-600">Network</label>
-                            <div className="font-medium">{config.network.chainName}</div>
+                            <div className="font-medium">{cryptoNetwork.chainName}</div>
                           </div>
                           <div>
                             <label className="text-gray-600">Contract</label>
-                            <div className="font-mono text-xs break-all">{config.network.contractAddress}</div>
+                            <div className="font-mono text-xs break-all">{cryptoNetwork.contractAddress}</div>
                           </div>
                         </>
                       )}
@@ -860,7 +962,8 @@ export default function CaptivePortal() {
                   </div>
                 </CardContent>
               </Card>
-            )}
+              );
+            })()}
           </div>
         )}
       </main>

@@ -92,7 +92,7 @@
     "showCommunityBadge": true
   },
   "features": {
-    "enableCrypto": false,
+    "enableCrypto": true,
     "enableWalletConnection": true,
     "requireWalletForPremium": false,
     "showTransactionDetails": true,
@@ -102,6 +102,29 @@
     "enabled": true,
     "expressCheckout": true,
     "currency": "usd"
+  },
+  "payments": {
+    "stripe": {
+      "enabled": true,
+      "paymentMethods": [
+        "card",
+        "apple_pay",
+        "google_pay",
+        "link"
+      ],
+      "currency": "usd"
+    },
+    "crypto": {
+      "enabled": true,
+      "network": {
+        "chainId": 10,
+        "chainName": "Optimism",
+        "rpcUrl": "https://mainnet.optimism.io",
+        "contractAddress": "",
+        "tokenSymbol": "MESH",
+        "tokenDecimals": 18
+      }
+    }
   },
   "admin": {
     "password": "change-me",
