@@ -16,8 +16,7 @@ import {
   Clock,
   Shield,
   CreditCard,
-  Wallet,
-  Smartphone
+  Wallet
 } from "lucide-react";
 import { web3Provider } from "@/lib/web3-mock";
 
@@ -37,7 +36,6 @@ interface ConfigTier {
   isPopular: boolean;
   acceptStripePayments: boolean;
   acceptCryptoPayments: boolean;
-  stripePaymentLink?: string;
 }
 
 interface CryptoNetworkConfig {
@@ -52,7 +50,6 @@ interface CryptoNetworkConfig {
 interface PaymentsConfig {
   stripe: {
     enabled: boolean;
-    paymentMethods: Array<'card' | 'apple_pay' | 'google_pay' | 'link'>;
     currency: string;
   };
   crypto: {
@@ -130,24 +127,27 @@ export default function CaptivePortal() {
     refetchInterval: 5000, // Refresh every 5 seconds
   });
 
-  // Check for payment success on page load
+  // Check for payment success on page load (Stripe redirects back with session_id)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const paymentSuccess = urlParams.get('payment_success');
     const tierId = urlParams.get('tier_id');
-    const userId = urlParams.get('user_id');
+    const sessionId = urlParams.get('session_id');
 
-    if (paymentSuccess === 'true' && tierId && userId) {
-      handlePaymentSuccess(tierId, userId);
+    if (paymentSuccess === 'true' && tierId && sessionId) {
+      handlePaymentSuccess(tierId, sessionId);
     }
   }, []);
 
-  const handlePaymentSuccess = async (tierId: string, userId: string) => {
+  const handlePaymentSuccess = async (tierId: string, stripeSessionId: string) => {
     try {
       setPaymentStep('confirming');
       setIsConnecting(true);
 
-      // Complete payment and create access session
+      // Recover user identifier saved before Stripe redirect
+      const userIdentifier = localStorage.getItem('meshlink_user_id') || generateDeviceIdentifier();
+
+      // Complete payment with server-side Stripe verification
       const response = await fetch('/api/complete-payment', {
         method: 'POST',
         headers: {
@@ -155,14 +155,16 @@ export default function CaptivePortal() {
         },
         body: JSON.stringify({
           tierId,
-          userIdentifier: userId,
+          userIdentifier,
           paymentMethod: 'stripe',
-          paymentReference: `stripe_${Date.now()}`
+          paymentReference: `stripe_${stripeSessionId}`,
+          stripeSessionId,
         }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to complete payment');
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to complete payment');
       }
 
       const sessionData = await response.json();
@@ -174,20 +176,22 @@ export default function CaptivePortal() {
         description: `Access granted for ${sessionData.tierName}`,
       });
 
-      // Clean up URL parameters
+      // Clean up URL parameters and localStorage
       window.history.replaceState({}, document.title, window.location.pathname);
+      localStorage.removeItem('meshlink_user_id');
+      localStorage.removeItem('meshlink_tier_id');
 
       // Redirect to internet after delay
       setTimeout(() => {
         window.location.href = config?.features.redirectAfterPayment || "https://www.google.com";
       }, 3000);
 
-    } catch (error) {
+    } catch (error: any) {
       setIsConnecting(false);
       setPaymentStep('select');
       toast({
         title: "Payment Processing Failed",
-        description: "Please contact support or try again.",
+        description: error.message || "Please contact support or try again.",
         variant: "destructive",
       });
     }
@@ -277,35 +281,46 @@ export default function CaptivePortal() {
       setPaymentStep('paying');
       setIsConnecting(true);
 
-      if (!tier.stripePaymentLink) {
-        throw new Error('Stripe payment link not configured');
-      }
-      
+      // Save user identifier for when Stripe redirects back
+      const userIdentifier = generateDeviceIdentifier();
+      localStorage.setItem('meshlink_user_id', userIdentifier);
+      localStorage.setItem('meshlink_tier_id', tier.id);
+
       toast({
         title: "Payment Processing",
-        description: "Redirecting to secure checkout...",
+        description: "Creating secure checkout session...",
+      });
+
+      // Call server to create Stripe Checkout Session (also grants temp internet access)
+      const response = await fetch('/api/payment/create-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tierId: tier.id }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to create checkout session');
+      }
+
+      const { checkoutUrl } = await response.json();
+
+      toast({
+        title: "Redirecting",
+        description: "Sending you to secure Stripe checkout...",
       });
 
       setPaymentStep('confirming');
 
-      // Generate user identifier (in real app, this would be MAC address or device ID)
-      const userIdentifier = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      localStorage.setItem('meshlink_user_id', userIdentifier);
-      localStorage.setItem('meshlink_tier_id', tier.id);
-
-      // Create success URL that returns to our app for session creation
-      const successUrl = encodeURIComponent(`${window.location.origin}/?payment_success=true&tier_id=${tier.id}&user_id=${userIdentifier}`);
-      const checkoutUrl = `${tier.stripePaymentLink}?success_url=${successUrl}`;
-
-      // Redirect to Stripe Payment Link
+      // Redirect to Stripe Checkout
       window.location.href = checkoutUrl;
 
-    } catch (error) {
+    } catch (error: any) {
       setIsConnecting(false);
       setPaymentStep('select');
       toast({
         title: "Payment Failed",
-        description: "Unable to process payment. Please try again.",
+        description: error.message || "Unable to process payment. Please try again.",
         variant: "destructive",
       });
     }
@@ -716,62 +731,25 @@ export default function CaptivePortal() {
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Stripe Payment Methods */}
+                {/* Stripe checkout — handles card, Apple Pay, Google Pay, Link on their hosted page */}
                 {(() => {
                   const tier = config.pricing.tiers.find(t => t.id === selectedPlan);
                   const stripeEnabled = config.payments?.stripe?.enabled ?? config.stripe.enabled;
-                  const paymentMethods = config.payments?.stripe?.paymentMethods ?? ['card'];
 
                   if (!tier?.acceptStripePayments || !stripeEnabled) return null;
 
                   return (
-                    <div className="space-y-2">
-                      <p className="text-sm text-gray-500 font-medium">Pay ${tier.fiatPrice}</p>
-
-                      {paymentMethods.includes('card') && (
-                        <Button
-                          className="w-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-2"
-                          onClick={() => handlePaymentMethodSelect('stripe')}
-                        >
-                          <CreditCard className="w-5 h-5" />
-                          Credit / Debit Card
-                        </Button>
-                      )}
-
-                      {paymentMethods.includes('apple_pay') && (
-                        <Button
-                          className="w-full bg-black hover:bg-gray-800 text-white flex items-center justify-center gap-2"
-                          onClick={() => handlePaymentMethodSelect('stripe')}
-                        >
-                          <Smartphone className="w-5 h-5" />
-                          Apple Pay
-                        </Button>
-                      )}
-
-                      {paymentMethods.includes('google_pay') && (
-                        <Button
-                          className="w-full bg-white hover:bg-gray-100 text-gray-800 border border-gray-300 flex items-center justify-center gap-2"
-                          onClick={() => handlePaymentMethodSelect('stripe')}
-                        >
-                          <Wallet className="w-5 h-5" />
-                          Google Pay
-                        </Button>
-                      )}
-
-                      {paymentMethods.includes('link') && (
-                        <Button
-                          className="w-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2"
-                          onClick={() => handlePaymentMethodSelect('stripe')}
-                        >
-                          <ArrowRight className="w-5 h-5" />
-                          Pay with Link
-                        </Button>
-                      )}
-                    </div>
+                    <Button
+                      className="w-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-2"
+                      onClick={() => handlePaymentMethodSelect('stripe')}
+                    >
+                      <CreditCard className="w-5 h-5" />
+                      Pay ${tier.fiatPrice} with Card
+                    </Button>
                   );
                 })()}
 
-                {/* Crypto Payment Option */}
+                {/* Crypto payment option */}
                 {(() => {
                   const tier = config.pricing.tiers.find(t => t.id === selectedPlan);
                   const cryptoEnabled = config.payments?.crypto?.enabled ?? config.features.enableCrypto;
@@ -780,18 +758,13 @@ export default function CaptivePortal() {
                   if (!tier?.acceptCryptoPayments || !cryptoEnabled) return null;
 
                   return (
-                    <div className="space-y-2 pt-2 border-t border-gray-200">
-                      <p className="text-sm text-gray-500 font-medium">
-                        Or pay {tier.price} {config.pricing.currency} on {cryptoNetwork.chainName}
-                      </p>
-                      <Button
-                        className="w-full bg-orange-600 hover:bg-orange-700 text-white flex items-center justify-center gap-2"
-                        onClick={() => handlePaymentMethodSelect('crypto')}
-                      >
-                        <Wallet className="w-5 h-5" />
-                        Pay with Crypto
-                      </Button>
-                    </div>
+                    <Button
+                      className="w-full bg-orange-600 hover:bg-orange-700 text-white flex items-center justify-center gap-2"
+                      onClick={() => handlePaymentMethodSelect('crypto')}
+                    >
+                      <Wallet className="w-5 h-5" />
+                      Pay {tier.price} {config.pricing.currency} with Crypto
+                    </Button>
                   );
                 })()}
 

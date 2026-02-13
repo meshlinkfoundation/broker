@@ -2,15 +2,16 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { networkManager } from "./network-manager";
-import { 
-  insertUserSchema, 
-  insertHotspotSessionSchema, 
+import {
+  insertUserSchema,
+  insertHotspotSessionSchema,
   insertTransactionSchema,
-  insertAccessSessionSchema 
+  insertAccessSessionSchema
 } from "@shared/schema";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import Stripe from "stripe";
 const createSessionSchema = z.object({
   walletAddress: z.string().min(1),
   packageId: z.number().int().positive(),
@@ -89,6 +90,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  // Create Stripe Checkout Session for paid tiers
+  app.post("/api/payment/create-checkout", async (req, res) => {
+    try {
+      const { tierId } = req.body;
+
+      if (!config || !tierId) {
+        return res.status(400).json({ error: "Missing required parameters" });
+      }
+
+      const tier = config.pricing.tiers.find((t: any) => t.id === tierId);
+      if (!tier || tier.isFree) {
+        return res.status(400).json({ error: "Invalid tier for Stripe checkout" });
+      }
+
+      const stripeKey = process.env.STRIPE_SECRET_KEY;
+      if (!stripeKey) {
+        return res.status(500).json({ error: "Stripe is not configured" });
+      }
+
+      const stripe = new Stripe(stripeKey);
+      const clientIp = networkManager.getClientIp(req);
+
+      // Grant temporary internet access so the client can reach Stripe
+      await networkManager.grantTemporaryAccess(clientIp);
+
+      // Build the host from the request (works behind captive portal redirect)
+      const host = req.headers.host || `192.168.50.1:${config.broker?.port || 3000}`;
+      const baseUrl = `http://${host}`;
+
+      const session = await stripe.checkout.sessions.create({
+        line_items: [{
+          price_data: {
+            currency: config.payments?.stripe?.currency || config.stripe?.currency || 'usd',
+            product_data: {
+              name: `${tier.name} - MeshLink WiFi`,
+              description: tier.description,
+            },
+            unit_amount: Math.round(tier.fiatPrice * 100), // Stripe expects cents
+          },
+          quantity: 1,
+        }],
+        mode: 'payment',
+        success_url: `${baseUrl}/?payment_success=true&tier_id=${tierId}&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${baseUrl}/?payment_cancelled=true`,
+      });
+
+      console.log(`[Routes] Stripe checkout session ${session.id} created for tier ${tierId} (client ${clientIp})`);
+
+      res.json({ checkoutUrl: session.url });
+    } catch (error: any) {
+      console.error("Stripe checkout error:", error);
+      res.status(500).json({ error: "Failed to create checkout session: " + error.message });
+    }
+  });
+
   // Get live network status
   app.get("/api/network/status", async (req, res) => {
     try {
@@ -111,8 +167,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Complete payment and create access session
   app.post("/api/complete-payment", async (req, res) => {
     try {
-      const { tierId, userIdentifier, paymentMethod, paymentReference } = req.body;
-      
+      const { tierId, userIdentifier, paymentMethod, paymentReference, stripeSessionId } = req.body;
+
       if (!config || !tierId || !userIdentifier) {
         return res.status(400).json({ error: "Missing required parameters" });
       }
@@ -122,9 +178,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid tier" });
       }
 
+      // Verify Stripe payment if applicable
+      if (paymentMethod === 'stripe' && !tier.isFree) {
+        if (!stripeSessionId) {
+          return res.status(400).json({ error: "Missing Stripe session ID" });
+        }
+
+        const stripeKey = process.env.STRIPE_SECRET_KEY;
+        if (!stripeKey) {
+          return res.status(500).json({ error: "Stripe is not configured" });
+        }
+
+        const stripe = new Stripe(stripeKey);
+        const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
+
+        if (session.payment_status !== 'paid') {
+          return res.status(402).json({ error: "Payment not completed" });
+        }
+
+        console.log(`[Routes] Stripe session ${stripeSessionId} verified - payment_status: ${session.payment_status}`);
+      }
+
       // Generate unique session GUID
       const sessionGuid = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       // Calculate expiry date
       const startDate = new Date();
       const expiryDate = new Date(startDate.getTime() + tier.durationHours * 60 * 60 * 1000);

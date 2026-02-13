@@ -215,109 +215,91 @@ chmod +x /etc/init.d/meshlink
 /etc/init.d/meshlink start
 ```
 
-## Option 2: Raspberry Pi OS Installation (Development/Testing)
+## Option 2: Raspberry Pi OS Installation (Tested & Working)
+
+> **Tested on:** Raspberry Pi 5, Raspberry Pi OS (Debian 13 Trixie), NetworkManager
 
 ### 1. Install Raspberry Pi OS
 
-1. Use Raspberry Pi Imager to flash Raspberry Pi OS Lite
-2. Enable SSH and configure WiFi in imager settings
-3. Boot and SSH into the Pi
+1. Use Raspberry Pi Imager to flash **Raspberry Pi OS** (Desktop or Lite, 64-bit)
+2. Configure hostname, user account (`meshlink`), and **enable SSH** in imager settings
+3. Connect the Pi via Ethernet and SSH in
 
-### 2. System Setup
-
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Node.js 20
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs git hostapd dnsmasq iptables-persistent
-
-# Clone MeshLink
-git clone https://github.com/your-username/meshlink.git
-cd meshlink
-npm install
-```
-
-### 3. Configure WiFi Access Point
-
-Edit `/etc/hostapd/hostapd.conf`:
-
-```conf
-interface=wlan0
-driver=nl80211
-ssid=MeshLink_Free
-hw_mode=g
-channel=7
-wmm_enabled=0
-macaddr_acl=0
-auth_algs=1
-ignore_broadcast_ssid=0
-wpa=0
-```
-
-Edit `/etc/dnsmasq.conf`:
-
-```conf
-interface=wlan0
-dhcp-range=10.82.1.2,10.82.1.20,255.255.255.0,24h
-address=/meshlink.local/10.82.1.1
-```
-
-### 4. Configure Network Interfaces
-
-Edit `/etc/dhcpcd.conf`:
-
-```conf
-interface wlan0
-    static ip_address=10.82.1.1/24
-    nohook wpa_supplicant
-```
-
-### 5. Enable IP Forwarding and NAT
+### 2. Update the System
 
 ```bash
-# Enable IP forwarding
-echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
-
-# Configure iptables for NAT
-sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-sudo iptables -A FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT
-sudo iptables -A FORWARD -i wlan0 -o eth0 -j ACCEPT
-
-# Save iptables rules
-sudo sh -c "iptables-save > /etc/iptables/rules.v4"
+ssh meshlink@<pi-ip-address>
+sudo apt update -y && sudo apt upgrade -y
 ```
 
-### 6. Create MeshLink Service
+### 3. Run the MeshLink Installer
 
-Create `/etc/systemd/system/meshlink.service`:
-
-```ini
-[Unit]
-Description=MeshLink Hotspot Management
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/meshlink
-ExecStart=/usr/bin/node server/index.js
-Restart=always
-RestartSec=10
-Environment=NODE_ENV=production
-Environment=PORT=3000
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
+The `meshlink-wifi-gateway/install.sh` script handles **everything** end-to-end:
+- System packages (hostapd, dnsmasq, iptables, iw, rfkill)
+- WiFi radio unblock (soft-blocked by default on Pi 5)
+- NetworkManager configured to ignore wlan0
+- Static IP on wlan0, hostapd (WPA2 AP), dnsmasq (DHCP + DNS)
+- IP forwarding and NAT (masquerade)
+- Captive portal redirect (iptables REDIRECT port 80 → broker)
+- Node.js 20 install
+- Broker build (`npm install && npm run build`)
+- Systemd services for boot persistence
 
 ```bash
-sudo systemctl enable meshlink
-sudo systemctl start meshlink
+# Clone the repo
+git clone <repo-url>
+cd meshlink/meshlink-wifi-gateway
+
+# Run the installer (does everything)
+bash install.sh
 ```
+
+Default AP settings (edit variables at top of `install.sh` to customize):
+
+| Setting | Default |
+|---------|---------|
+| SSID | `MeshLink` |
+| Password | `meshlink2025` |
+| Gateway IP | `192.168.50.1` |
+| DHCP range | `192.168.50.10` - `192.168.50.100` |
+| Channel | 6 (2.4 GHz) |
+| Broker port | 3000 |
+
+### 4. Verify Everything
+
+After the installer finishes, it runs verification checks automatically. You can also check manually:
+
+```bash
+# All services should be active
+for svc in meshlink-network hostapd dnsmasq meshlink-broker; do
+  echo "$svc: $(systemctl is-active $svc)"
+done
+
+# wlan0 should show 192.168.50.1
+ip addr show wlan0
+
+# Broker should respond
+curl -s http://192.168.50.1:3000/api/health
+
+# REDIRECT rule should be present
+sudo iptables -t nat -L PREROUTING -n
+```
+
+### 5. Test the Captive Portal
+
+1. Connect a phone/laptop to the **MeshLink** WiFi (password: `meshlink2025`)
+2. The device should show a "Sign in to WiFi" notification or popup
+3. Tapping it opens the MeshLink landing page
+4. If it doesn't appear, **forget the network and reconnect**
+
+#### Key differences from older Raspberry Pi OS (Bookworm and earlier)
+
+- **NetworkManager** is used instead of dhcpcd. The installer creates `/etc/NetworkManager/conf.d/99-meshlink-unmanaged.conf` to prevent NM from managing wlan0.
+- **WiFi is RF-blocked by default** on Pi 5. The installer runs `rfkill unblock wlan` (must happen AFTER NetworkManager restart).
+- **sysctl** is at `/usr/sbin/sysctl`. The installer uses `/etc/sysctl.d/99-meshlink.conf` drop-in.
+- **dnsmasq** requires `bind-interfaces`, `listen-address`, and `IGNORE_RESOLVCONF=yes` to prevent breaking the Pi's own DNS (which kills SSH).
+- A **meshlink-network.service** systemd unit handles rfkill, wlan0 IP, and iptables restore on boot.
+- Captive portal uses **iptables REDIRECT** (not DNAT) — DNAT to local IPs has routing issues on this platform.
 
 ## Configuration Management
 

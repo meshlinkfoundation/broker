@@ -16,7 +16,7 @@ function Router() {
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/admin/database" component={DatabaseManager} />
-      <Route component={NotFound} />
+      <Route component={CaptivePortal} />
     </Switch>
   );
 }

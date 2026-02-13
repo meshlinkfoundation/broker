@@ -50,8 +50,7 @@
         "isFree": false,
         "isPopular": true,
         "acceptStripePayments": true,
-        "acceptCryptoPayments": true,
-        "stripePaymentLink": "https://buy.stripe.com/test_00000000000000000002"
+        "acceptCryptoPayments": false
       },
       {
         "id": "premium",
@@ -73,8 +72,7 @@
         "isFree": false,
         "isPopular": false,
         "acceptStripePayments": true,
-        "acceptCryptoPayments": true,
-        "stripePaymentLink": "https://buy.stripe.com/test_00000000000000000003"
+        "acceptCryptoPayments": false
       }
     ]
   },
@@ -92,8 +90,8 @@
     "showCommunityBadge": true
   },
   "features": {
-    "enableCrypto": true,
-    "enableWalletConnection": true,
+    "enableCrypto": false,
+    "enableWalletConnection": false,
     "requireWalletForPremium": false,
     "showTransactionDetails": true,
     "redirectAfterPayment": "https://www.google.com"
@@ -115,7 +113,7 @@
       "currency": "usd"
     },
     "crypto": {
-      "enabled": true,
+      "enabled": false,
       "network": {
         "chainId": 10,
         "chainName": "Optimism",

@@ -1,10 +1,37 @@
-# Stripe Express Checkout Setup for MeshLink Node Operators
+# Stripe Checkout Integration for MeshLink Node Operators
 
-This guide explains how to set up Stripe payments for your MeshLink node using Stripe Payment Links - no API keys or server configuration required!
+This guide explains how to set up Stripe payments for your MeshLink node using server-side Checkout Sessions. The broker creates checkout sessions dynamically, grants temporary internet access so the client can reach Stripe, and verifies payment server-side before granting full access.
 
-## What is Stripe Express Checkout?
+## How It Works
 
-Stripe Payment Links are pre-built checkout pages that you create in your Stripe Dashboard. They handle all payment processing, security, and compliance automatically. Your customers get redirected to a secure Stripe-hosted page to complete their payment.
+```
+Client selects a paid tier (e.g. Lightweight $4.99)
+         |
+         v
+Frontend calls POST /api/payment/create-checkout
+         |
+         v
+Broker grants temporary internet access (10 min)
+Broker creates a Stripe Checkout Session via API
+Returns { checkoutUrl } to the client
+         |
+         v
+Client is redirected to Stripe's hosted checkout page
+(temporary access lets them reach checkout.stripe.com)
+         |
+         v
+Client completes payment on Stripe
+Stripe redirects back to the captive portal with session_id
+         |
+         v
+Frontend calls POST /api/complete-payment with stripeSessionId
+         |
+         v
+Broker calls stripe.checkout.sessions.retrieve(sessionId)
+Verifies payment_status === 'paid'
+Grants full tier access (ipset add meshlink_auth)
+Cancels temporary access timer
+```
 
 ## Setup Steps
 
@@ -13,114 +40,179 @@ Stripe Payment Links are pre-built checkout pages that you create in your Stripe
 - Sign up for a free account
 - Complete account verification (required for live payments)
 
-### 2. Create Payment Links
-1. Login to your Stripe Dashboard
-2. Go to **Products** → **Payment Links**
-3. Click **Create Payment Link**
-4. For each pricing tier in your config:
-   - **Product Name**: Match your tier name (e.g. "Premium Speed")
-   - **Price**: Set the fiat price (e.g. $2.99)
-   - **Currency**: USD (or your local currency)
-   - **Payment Methods**: Enable Card payments
-   - **After Payment**: Set success URL to your redirect URL
+### 2. Get Your Secret Key
+1. Log in to your [Stripe Dashboard](https://dashboard.stripe.com)
+2. Toggle **"Test mode"** on (top-right) for testing
+3. Go to **Developers > API keys**
+4. Copy your **Secret key** — it starts with `sk_test_...`
 
-### 3. Get Payment Link URLs
-After creating each payment link, copy the full URL that looks like:
-```
-https://buy.stripe.com/live_xxxxxxxxxxxxxxxxxx
+### 3. Configure the Broker
+
+Create a `.env` file in the `broker/` directory:
+
+```bash
+echo "STRIPE_SECRET_KEY=sk_test_yourKeyHere" > broker/.env
 ```
 
-### 4. Update Your Node Configuration
-Edit `server/config/meshlink-config.json`:
+The broker reads `STRIPE_SECRET_KEY` from the environment on each checkout request. On the Pi, the systemd service loads this file automatically via `EnvironmentFile`.
+
+### 4. Configure Pricing Tiers
+
+Edit `server/config/meshlink-config.json`. Each paid tier needs `acceptStripePayments: true` and a `fiatPrice` (in dollars):
 
 ```json
 {
   "pricing": {
     "tiers": [
       {
-        "id": "premium",
-        "name": "Premium Speed",
+        "id": "lightweight",
+        "name": "Lightweight",
+        "fiatPrice": 4.99,
         "acceptStripePayments": true,
-        "acceptCryptoPayments": true,
-        "stripePaymentLink": "https://buy.stripe.com/live_xxxxxxxxxxxxxxxxxx"
+        "isFree": false
+      },
+      {
+        "id": "premium",
+        "name": "Super Fast Premium",
+        "fiatPrice": 9.99,
+        "acceptStripePayments": true,
+        "isFree": false
       }
     ]
   },
-  "stripe": {
-    "enabled": true,
-    "expressCheckout": true,
-    "currency": "usd"
+  "payments": {
+    "stripe": {
+      "enabled": true,
+      "paymentMethods": ["card", "apple_pay", "google_pay", "link"],
+      "currency": "usd"
+    }
   }
 }
 ```
 
+No Payment Links or product IDs needed — the broker creates Stripe products/prices on the fly from the config.
+
+## API Endpoints
+
+### Create Checkout Session
+```http
+POST /api/payment/create-checkout
+Content-Type: application/json
+
+{
+  "tierId": "lightweight"
+}
+```
+
+**Response:**
+```json
+{
+  "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_test_..."
+}
+```
+
+Side effects:
+- Grants 10-minute temporary internet access to the requesting client IP
+- Creates a Stripe Checkout Session with the tier's name and price
+
+### Complete Payment (with Stripe verification)
+```http
+POST /api/complete-payment
+Content-Type: application/json
+
+{
+  "tierId": "lightweight",
+  "userIdentifier": "device_abc123",
+  "paymentMethod": "stripe",
+  "paymentReference": "stripe_cs_test_...",
+  "stripeSessionId": "cs_test_..."
+}
+```
+
+The broker retrieves the Stripe session and verifies `payment_status === 'paid'` before granting access. For free tiers, no Stripe verification is needed.
+
 ## Testing
 
 ### Test Mode
-- Use test payment links during development
-- Test URLs start with `https://buy.stripe.com/test_`
-- Use test card numbers from [Stripe's documentation](https://stripe.com/docs/testing#cards)
+1. Set `STRIPE_SECRET_KEY` to your `sk_test_...` key
+2. Use Stripe's test card numbers:
+   - **Success:** `4242 4242 4242 4242`
+   - **Decline:** `4000 0000 0000 0002`
+   - **3D Secure:** `4000 0025 0000 3155`
+   - Any future expiry date, any 3-digit CVC
+3. View test payments in [Stripe Dashboard > Payments](https://dashboard.stripe.com/test/payments)
 
 ### Live Mode
-- Switch to live payment links for production
-- Live URLs start with `https://buy.stripe.com/live_`
-- Real payments will be processed
+1. Complete Stripe account verification
+2. Switch to your `sk_live_...` secret key in `.env`
+3. Real payments will be processed
 
 ## Payment Method Configuration
 
-Each pricing tier can accept different payment types using boolean flags:
+Each pricing tier can accept different payment types:
 
 ```json
 {
   "id": "premium",
-  "acceptStripePayments": true,    // Accept credit cards via Stripe
-  "acceptCryptoPayments": true,    // Accept crypto payments
-  "stripePaymentLink": "https://buy.stripe.com/live_xxx"
+  "acceptStripePayments": true,
+  "acceptCryptoPayments": true
 }
 ```
 
-**Configuration Options:**
-- `acceptStripePayments: true, acceptCryptoPayments: true` - Shows payment method selection
-- `acceptStripePayments: true, acceptCryptoPayments: false` - Card payments only
-- `acceptStripePayments: false, acceptCryptoPayments: true` - Crypto payments only
-- `acceptStripePayments: false, acceptCryptoPayments: false` - Free tier only
+| Stripe | Crypto | Behavior |
+|--------|--------|----------|
+| `true` | `true` | Shows payment method selection screen |
+| `true` | `false` | Goes straight to Stripe checkout |
+| `false` | `true` | Crypto only |
+| `false` | `false` | Free tier (no payment) |
 
-## Benefits of This Approach
+## Temporary Access & Security
 
-✅ **No API Keys**: No sensitive credentials to manage
-✅ **No Server Setup**: No backend payment processing code
-✅ **Automatic Security**: Stripe handles PCI compliance
-✅ **Easy Updates**: Change prices in Stripe Dashboard
-✅ **Mobile Optimized**: Works perfectly on all devices
-✅ **Global Payments**: Supports international cards
-✅ **Instant Setup**: Configure in minutes, not hours
+When a client initiates Stripe checkout:
+1. The broker adds their IP to `meshlink_auth` ipset (grants internet)
+2. A 10-minute timer starts to auto-revoke access
+3. If the client completes payment and returns, the timer is cancelled and full tier access is granted
+4. If the client abandons checkout, the timer fires and revokes internet access
+
+This prevents:
+- Clients exploiting the checkout flow for free internet (10 min max)
+- Fake payment callbacks (server verifies with Stripe API)
+- Payment Links requiring manual dashboard setup per tier
+
+## Deployment on Raspberry Pi
+
+The `install.sh` script in `meshlink-wifi-gateway/` creates the broker systemd service with:
+
+```ini
+EnvironmentFile=-/path/to/broker/.env
+```
+
+The `-` prefix means "don't fail if the file doesn't exist" (Stripe is optional). Just create the `.env` file and restart the broker:
+
+```bash
+echo "STRIPE_SECRET_KEY=sk_test_yourKeyHere" > /home/meshlink/meshlink/broker/.env
+sudo systemctl restart meshlink-broker
+```
+
+## Why Not Webhooks?
+
+The Pi is behind NAT with no public IP, so Stripe can't push webhook events to it. Instead, the broker verifies payment by calling `stripe.checkout.sessions.retrieve()` when the client returns from checkout. This is reliable for the captive portal use case since the client must return to get internet access.
 
 ## Troubleshooting
 
-### Payment Link Not Working
-- Verify the URL is correct and starts with `https://buy.stripe.com/`
-- Ensure your Stripe account is activated
-- Check that the payment link is not expired
+### "Stripe is not configured" error
+- Check that `broker/.env` contains `STRIPE_SECRET_KEY=sk_test_...`
+- Restart the broker: `sudo systemctl restart meshlink-broker`
 
-### Payments Not Completing
-- Verify your success URL is accessible
-- Test with Stripe's test card numbers first
-- Check Stripe Dashboard for payment status
+### Client can't reach Stripe checkout
+- Temporary access may not be working — check `sudo ipset list meshlink_auth`
+- Check broker logs: `sudo journalctl -u meshlink-broker -n 30`
 
-### Currency Issues
-- Ensure your payment link currency matches your config
+### Payment completes but access not granted
+- Check that the redirect URL matches your broker's address
+- Verify the Stripe session ID is being passed in the URL
+- Check broker logs for verification errors
+
+### Currency issues
+- Set `payments.stripe.currency` in `meshlink-config.json`
 - Stripe supports 135+ currencies
-
-## Support
-
-If you need help with Stripe setup:
-1. Check [Stripe's Payment Links documentation](https://stripe.com/docs/payment-links)
-2. Contact Stripe support through your dashboard
-3. Join the MeshLink community for node operator support
-
-## Security Notes
-
-- Payment Links are public URLs - this is normal and secure
-- Stripe handles all sensitive payment data
-- Your node never sees credit card information
-- All transactions are encrypted and monitored by Stripe

@@ -32,6 +32,29 @@ interface AccessSession {
 
 ## API Endpoints
 
+### Create Stripe Checkout Session
+```http
+POST /api/payment/create-checkout
+Content-Type: application/json
+
+{
+  "tierId": "lightweight"
+}
+```
+
+**Response:**
+```json
+{
+  "checkoutUrl": "https://checkout.stripe.com/c/pay/cs_test_..."
+}
+```
+
+This endpoint:
+1. Validates the tier exists and is not free
+2. Grants temporary internet access (10 min) so the client can reach Stripe
+3. Creates a Stripe Checkout Session with the tier's name and fiatPrice
+4. Returns the checkout URL for client-side redirect
+
 ### Payment Completion
 ```http
 POST /api/complete-payment
@@ -39,11 +62,14 @@ Content-Type: application/json
 
 {
   "tierId": "premium",
-  "userIdentifier": "device_mac_address_or_id", 
+  "userIdentifier": "device_mac_address_or_id",
   "paymentMethod": "stripe",
-  "paymentReference": "stripe_payment_id"
+  "paymentReference": "stripe_cs_test_abc123",
+  "stripeSessionId": "cs_test_abc123"
 }
 ```
+
+When `paymentMethod` is `"stripe"` and the tier is not free, the broker verifies the payment by calling `stripe.checkout.sessions.retrieve(stripeSessionId)` and checking that `payment_status === 'paid'`. For free tiers, no verification is needed.
 
 **Response:**
 ```json
@@ -177,10 +203,13 @@ fi
 ## Session Lifecycle
 
 ### 1. Session Creation
-- User completes payment through Stripe or crypto
-- System calls `/api/complete-payment` with tier and user details
+- For paid tiers: client calls `/api/payment/create-checkout` which grants temporary internet access and returns a Stripe Checkout URL
+- Client completes payment on Stripe and is redirected back with a `session_id`
+- System calls `/api/complete-payment` with tier, user details, and `stripeSessionId`
+- Broker verifies payment with Stripe API before granting access
 - Unique session GUID generated
 - Access record created with expiration date
+- For free tiers: client calls `/api/complete-payment` directly (no Stripe verification)
 
 ### 2. Active Monitoring
 - Gateway services query session status regularly
