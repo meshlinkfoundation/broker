@@ -764,7 +764,18 @@ EOF
 
 ---
 
-## 10. Future Roadmap
+## 10. Roadmap
+
+### 10.0 Completed
+
+The following milestones have been delivered:
+
+- **Captive Portal Broker** — Full React + Express + SQLite captive portal with tiered access control, admin dashboard, and REST API
+- **Stripe Checkout Integration** — Server-side Checkout Sessions with temporary access grant, payment verification, and automatic tier provisioning
+- **Raspberry Pi 5 Deployment** — Complete install scripts, systemd services, hostapd/dnsmasq/iptables configuration, and NetworkManager integration
+- **ipset-based Access Control** — Per-client network authorization with tier-specific ipsets, bandwidth shaping, and automatic session expiry
+- **Admin Dashboard** — Built-in analytics, session management, database viewer, and real-time client monitoring
+- **Operator Dashboard** — Standalone multi-node monitoring dashboard (operator-dashboard/) with proxy-based aggregation across Tailscale
 
 ### 10.1 Short-term Goals (6-12 months)
 
@@ -780,7 +791,7 @@ EOF
 - **Mobile Apps**: Native iOS and Android applications
 - **Enhanced Security**: Zero-knowledge authentication system
 
-#### 10.1.2 Network Expansion
+#### 10.1.3 Network Expansion
 - **Multi-platform Support**: Support for other SBC platforms
 - **Cellular Integration**: 4G/5G backhaul for remote locations
 - **Satellite Connectivity**: Starlink integration for global coverage

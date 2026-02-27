@@ -102,6 +102,7 @@ export const accessSessions = pgTable("access_sessions", {
   id: serial("id").primaryKey(),
   sessionGuid: text("session_guid").notNull().unique(),
   userIdentifier: text("user_identifier").notNull(), // Could be MAC address, device ID, etc.
+  clientIp: text("client_ip"), // IP address for ipset restore on boot
   tierId: text("tier_id").notNull(),
   tierName: text("tier_name").notNull(),
   paymentMethod: text("payment_method").notNull(), // 'stripe' or 'crypto'

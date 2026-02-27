@@ -1,121 +1,119 @@
-# broker
+# MeshLink Broker
 
-Code that supports the **captive portal UI** and **configuration** for MeshLink access points. This repository provides the web interface and configuration logic used when devices connect to a MeshLink network and interact with the broker (e.g., accept terms or authenticate) before gaining full access.
+The **MeshLink Broker** is the captive portal and access management server that runs on each MeshLink node (Raspberry Pi). It provides the web interface for connecting users, processes payments, enforces bandwidth tiers via iptables/ipset, and exposes admin/analytics APIs.
 
-## What it does
+## Features
 
-- **Captive portal UI**: The web pages and assets shown when a device joins a MeshLink network and is redirected to the broker—including the MeshLink Broker welcome experience and navigation (Home, About, Contact).
-- **Configuration for MeshLink access points**: Logic and data used to configure and drive the captive portal behavior on MeshLink access points.
-- **Static, hostable assets**: HTML, styles, and scripts that can be served by any web server or embedded in a captive-portal system.
+- **Captive Portal UI** — React + Tailwind + shadcn/ui interface shown to devices joining the MeshLink WiFi network
+- **Tiered Access Control** — Free, Lightweight, and Premium tiers with configurable bandwidth limits, data caps, and durations
+- **Stripe Checkout Integration** — Server-side Checkout Sessions with temporary access grant during payment flow (see [STRIPE_SETUP.md](STRIPE_SETUP.md))
+- **Network Management** — iptables REDIRECT + ipset-based client authorization, managed programmatically from the broker
+- **Admin Dashboard** — Built-in admin UI at `/admin` with session management, analytics, and database viewer
+- **SQLite Storage** — All sessions, users, and analytics stored locally with no external database dependency
+- **REST API** — Full API for config, health, network clients, sessions, analytics, and payments
 
-## Repository structure
+## Tech Stack
 
-| File        | Purpose                                      |
-|------------|-----------------------------------------------|
-| `index.html` | Main captive portal page (MeshLink Broker UI) |
-| `README.md`  | This documentation                            |
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts, wouter |
+| Backend | Node.js, Express, TypeScript, ESM |
+| Database | SQLite (better-sqlite3) |
+| Payments | Stripe Checkout Sessions |
+| Networking | iptables, ipset, hostapd, dnsmasq |
+| Hardware | Raspberry Pi 5 (Debian Trixie) |
 
-The page references `styles.css` and `script.js`; add those in the same directory if you want custom styling or client-side behavior.
+## Repository Structure
 
-## Running locally
+```
+broker/
+├── client/               # React frontend (Vite)
+│   ├── src/
+│   │   ├── pages/        # Captive portal, dashboard, admin
+│   │   ├── components/   # UI components (shadcn/ui + custom)
+│   │   ├── hooks/        # React Query hooks
+│   │   └── lib/          # Utilities, query client
+│   └── index.html
+├── server/
+│   ├── index.ts          # Express entry point (port 3000)
+│   ├── routes.ts         # All API routes
+│   ├── vite.ts           # Dev/prod serving
+│   ├── storage.ts        # SQLite database layer
+│   ├── network-manager.ts # iptables/ipset management
+│   └── config/
+│       └── meshlink-config.json  # Tier, branding, and feature config
+├── shared/               # Shared TypeScript types
+├── package.json
+├── vite.config.ts
+├── tsconfig.json
+└── tailwind.config.ts
+```
 
-1. **Prerequisites**: **Node.js v18 or later** is required. Check with `node -v`. If you're on Node 16 or older:
-   - With **nvm**: `nvm install 20` then `nvm use 20`
-   - With **Homebrew**: `brew install node@20` and ensure it's on your PATH
-   - Or install the LTS version from [nodejs.org](https://nodejs.org)
-2. **Install dependencies** (from the repo root):
-   ```bash
-   npm install
-   ```
-   If you previously ran `npm install` with Node 16, remove `node_modules` first: `rm -rf node_modules && npm install`.
-3. **Start the dev server** (serves both the API and the captive portal UI):
-   ```bash
-   npm run dev
-   ```
-4. Open **http://localhost:3000** in your browser.
+## Running Locally
 
-For production: run `npm run build`, then `npm start` to serve the built app.
+**Prerequisites:** Node.js v18+
 
-## How to use
+```bash
+cd broker
+npm install
+npm run dev
+```
 
-1. **Host the page**: Serve the repo (or at least `index.html`) from a web server that your captive-portal / MeshLink setup redirects users to.
-2. **Customize**: Edit `index.html` to change copy, links, or structure. Add `styles.css` and `script.js` as needed.
-3. **Integrate**: Point your MeshLink broker / gateway to this URL so that unauthenticated or new users see this page.
+Open **http://localhost:3000**. The dev server serves both the API and the React frontend with HMR.
 
-## Configuring tiers (AP operators)
+For production: `npm run build && npm start`
 
-Access point operators configure the captive portal’s plan options (tiers) by editing **`server/config/meshlink-config.json`**. The file is read on every request, so changes take effect without restarting the server.
+## Configuring Tiers
 
-### Where to edit
+Edit **`server/config/meshlink-config.json`** — changes take effect without restarting.
 
-- **File**: `server/config/meshlink-config.json`
-- **Section**: `pricing.tiers` — an array of tier objects. Add, remove, or reorder entries to change the plans users see.
-
-### Tier object fields
+### Key tier fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique ID (e.g. `free`, `premium`). Used internally and for traffic shaping. |
-| `name` | string | Display name shown on the portal (e.g. "Free Access", "Premium Speed"). |
-| `description` | string | Short description under the tier name. |
-| `price` | number | Price in the crypto currency defined in `pricing.currency` (e.g. MESH). Use `0` for free. |
-| `fiatPrice` | number | Price in fiat (e.g. USD) for display and Stripe. Use `0` for free. |
-| `dataLimitMB` | number | Data cap in megabytes (for display and enforcement if implemented). |
-| `durationHours` | number | Access duration in hours (e.g. `24` = 1 day, `168` = 1 week). |
-| `speedMbps` | number or string | Speed in Mbps (for display and QoS if configured). |
-| `features` | string[] | List of bullet points (e.g. `["1 Mbps speed", "Web browsing"]`). |
-| `buttonText` | string | Label on the plan’s button (e.g. "Connect Free", "Pay $4.99"). |
-| `buttonColor` | string | Theme: `green`, `blue`, `purple`, etc. |
-| `isFree` | boolean | `true` for free tier; affects flow (no payment step). |
-| `isPopular` | boolean | `true` to show a “Popular” badge on the card. |
-| `acceptStripePayments` | boolean | Whether this tier can be paid via Stripe. |
-| `acceptCryptoPayments` | boolean | Whether this tier can be paid via crypto (if enabled in `features`). |
-| `stripePaymentLink` | string (optional) | Stripe Payment Link URL for this tier. Required if `acceptStripePayments` is `true`. |
+| `id` | string | Unique ID (e.g. `free`, `premium`). Used for traffic shaping. |
+| `name` | string | Display name on the portal. |
+| `fiatPrice` | number | Price in USD for Stripe. `0` for free tiers. |
+| `dataLimitMB` | number | Data cap in megabytes. |
+| `durationHours` | number | Access duration (e.g. `24` = 1 day). |
+| `speedMbps` | number | Bandwidth limit for QoS. |
+| `isFree` | boolean | `true` skips the payment step. |
+| `acceptStripePayments` | boolean | Enable Stripe Checkout for this tier. |
+| `acceptCryptoPayments` | boolean | Enable crypto payments (if feature enabled). |
 
-### Example: adding a tier
+### Other config sections
 
-Add a new object to `pricing.tiers`:
+- **`nodeInfo`** — Node name, location, operator (shown on portal)
+- **`branding`** — Logo text, tagline, colors
+- **`features`** — Global toggles (crypto, wallet, redirect URL)
+- **`payments.stripe`** — Stripe on/off, currency, payment methods
+- **`admin`** — Dashboard password and enable/disable
 
-```json
-{
-  "id": "premium",
-  "name": "Premium Speed",
-  "description": "High-speed access for one week.",
-  "price": 50,
-  "fiatPrice": 4.99,
-  "dataLimitMB": 5120,
-  "durationHours": 168,
-  "speedMbps": 50,
-  "features": ["5GB limit", "50 Mbps", "7 days"],
-  "buttonText": "Pay $4.99",
-  "buttonColor": "blue",
-  "isFree": false,
-  "isPopular": true,
-  "acceptStripePayments": true,
-  "acceptCryptoPayments": false,
-  "stripePaymentLink": "https://buy.stripe.com/your_link_here"
-}
-```
+## API Endpoints
 
-### Other config in the same file
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/health` | No | Health check + uptime |
+| GET | `/api/config` | No | Public node/tier config |
+| GET | `/api/network/clients` | No | Connected clients list |
+| DELETE | `/api/network/clients/:ip` | No | Disconnect a client |
+| POST | `/api/admin/login` | No | Get admin token |
+| GET | `/api/admin/analytics` | Bearer | Session/revenue analytics |
+| GET | `/api/admin/sessions` | Bearer | Paginated session list |
+| DELETE | `/api/admin/sessions/:id` | Bearer | Revoke a session |
+| POST | `/api/payment/create-checkout` | No | Create Stripe Checkout Session |
+| POST | `/api/complete-payment` | No | Verify Stripe payment + grant access |
 
-- **`pricing.currency`** / **`pricing.fiatCurrency`**: Currency codes for crypto and fiat.
-- **`nodeInfo`**: Name, location, operator — shown on the portal.
-- **`branding`**: Logo text, tagline, colors.
-- **`features`**: Global toggles (e.g. crypto, wallet, redirect URL).
-- **`stripe`**: Global Stripe on/off and currency.
-- **`admin`**: Dashboard password and enable/disable; change default in production.
+## Deployment
 
-Save `meshlink-config.json` with valid JSON (no trailing commas). Reload the captive portal page to see updated tiers.
+See [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) for Raspberry Pi setup and [STRIPE_SETUP.md](STRIPE_SETUP.md) for payment configuration.
 
-## Scope & Stability
+## Related Docs
 
-This repository provides the reference implementation of the MeshLink broker captive portal. It is intended to be stable and infrastructure-oriented.
-
-Experimental UI/UX changes and demos live in buildwithparallel repositories.
-
-## Technical notes
-
-- Plain HTML for the UI; no build step required.
-- Responsive viewport meta tag is set for mobile-friendly display.
-- This repo provides the captive portal UI and configuration used by MeshLink access points; redirect and authentication behavior is driven by this code in conjunction with your network/gateway setup.
+- [STRIPE_SETUP.md](STRIPE_SETUP.md) — Stripe Checkout integration guide
+- [ACCESS_MANAGEMENT.md](ACCESS_MANAGEMENT.md) — ipset-based access control details
+- [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) — Pi 5 deployment guide
+- [OPENWRT_DEPLOYMENT.md](OPENWRT_DEPLOYMENT.md) — OpenWRT deployment guide
+- [MESHLINK_WHITEPAPER.md](MESHLINK_WHITEPAPER.md) — Full protocol whitepaper
+- [SECURITY.md](SECURITY.md) — Security policy
+- [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines

@@ -96,6 +96,7 @@ export class SQLiteStorage implements IStorage {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sessionGuid TEXT UNIQUE NOT NULL,
         userIdentifier TEXT NOT NULL,
+        clientIp TEXT,
         tierId TEXT NOT NULL,
         tierName TEXT NOT NULL,
         paymentMethod TEXT NOT NULL,
@@ -111,6 +112,13 @@ export class SQLiteStorage implements IStorage {
         lastAccessAt TEXT
       )
     `);
+
+    // Migration: add clientIp column if missing (existing DBs)
+    try {
+      this.db.exec(`ALTER TABLE access_sessions ADD COLUMN clientIp TEXT`);
+    } catch {
+      // Column already exists
+    }
 
     // Create indexes for performance
     this.db.exec(`
@@ -349,24 +357,25 @@ export class SQLiteStorage implements IStorage {
   async createAccessSession(session: InsertAccessSession): Promise<AccessSession> {
     const stmt = this.db.prepare(`
       INSERT INTO access_sessions (
-        sessionGuid, userIdentifier, tierId, tierName, paymentMethod, 
-        paymentReference, status, dataLimitMB, dataUsedMB, speedMbps, 
+        sessionGuid, userIdentifier, clientIp, tierId, tierName, paymentMethod,
+        paymentReference, status, dataLimitMB, dataUsedMB, speedMbps,
         price, startDate, expiryDate, lastAccessAt
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    
+
     // Calculate price based on tier
-    const tierPrices = {
+    const tierPrices: Record<string, number> = {
       'Free Access': 0,
       'Premium Speed': 2.99,
       'Unlimited Pro': 19.99
     };
-    const price = tierPrices[session.tierName as keyof typeof tierPrices] || 0;
-    
+    const price = tierPrices[session.tierName] || 0;
+
     stmt.run(
       session.sessionGuid,
       session.userIdentifier,
+      (session as any).clientIp || null,
       session.tierId,
       session.tierName,
       session.paymentMethod,
@@ -380,7 +389,7 @@ export class SQLiteStorage implements IStorage {
       session.expiryDate.toISOString(),
       session.lastAccessAt ? session.lastAccessAt.toISOString() : null
     );
-    
+
     return this.getAccessSession(session.sessionGuid) as Promise<AccessSession>;
   }
 

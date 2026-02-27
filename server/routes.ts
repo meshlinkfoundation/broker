@@ -2,16 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { networkManager } from "./network-manager";
-import {
-  insertUserSchema,
-  insertHotspotSessionSchema,
-  insertTransactionSchema,
-  insertAccessSessionSchema
-} from "@shared/schema";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
 import Stripe from "stripe";
+
 const createSessionSchema = z.object({
   walletAddress: z.string().min(1),
   packageId: z.number().int().positive(),
@@ -31,21 +26,18 @@ function loadConfig() {
   }
 }
 
-// Load config on startup
 loadConfig();
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  
+
   // Get node configuration
   app.get("/api/config", async (req, res) => {
     try {
-      // Reload config each time to support updates
       loadConfig();
       if (!config) {
         throw new Error("Configuration not loaded");
       }
-      
-      // Return config without sensitive data
+
       const publicConfig = {
         ...config,
         stripe: {
@@ -53,7 +45,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           expressCheckout: config.stripe?.expressCheckout || false,
           currency: config.stripe?.currency || "usd"
         },
-        // Include new payments section with fallback to legacy fields for backward compatibility
         payments: config.payments || {
           stripe: {
             enabled: config.stripe?.enabled || false,
@@ -81,10 +72,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Health check endpoint
+  // Health check
   app.get("/api/health", (req, res) => {
-    res.json({ 
-      status: "ok", 
+    res.json({
+      status: "ok",
       timestamp: new Date().toISOString(),
       stripe: config?.stripe?.enabled || false
     });
@@ -112,10 +103,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const stripe = new Stripe(stripeKey);
       const clientIp = networkManager.getClientIp(req);
 
-      // Grant temporary internet access so the client can reach Stripe
-      await networkManager.grantTemporaryAccess(clientIp);
+      // Grant temporary access (10 min) so client can reach Stripe
+      await networkManager.grantAccess(clientIp, 600);
 
-      // Build the host from the request (works behind captive portal redirect)
       const host = req.headers.host || `192.168.50.1:${config.broker?.port || 3000}`;
       const baseUrl = `http://${host}`;
 
@@ -127,7 +117,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               name: `${tier.name} - MeshLink WiFi`,
               description: tier.description,
             },
-            unit_amount: Math.round(tier.fiatPrice * 100), // Stripe expects cents
+            unit_amount: Math.round(tier.fiatPrice * 100),
           },
           quantity: 1,
         }],
@@ -137,30 +127,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       console.log(`[Routes] Stripe checkout session ${session.id} created for tier ${tierId} (client ${clientIp})`);
-
       res.json({ checkoutUrl: session.url });
     } catch (error: any) {
       console.error("Stripe checkout error:", error);
       res.status(500).json({ error: "Failed to create checkout session: " + error.message });
-    }
-  });
-
-  // Get live network status
-  app.get("/api/network/status", async (req, res) => {
-    try {
-      const activeClients = networkManager.getActiveClients();
-      const connectedCount = activeClients.length;
-      
-      res.json({
-        connectedClients: connectedCount,
-        clients: activeClients.map(client => ({
-          ip: client.ip,
-          tier: client.tier.name,
-          expiryDate: client.expiryDate
-        }))
-      });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to get network status" });
     }
   });
 
@@ -199,17 +169,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log(`[Routes] Stripe session ${stripeSessionId} verified - payment_status: ${session.payment_status}`);
       }
 
-      // Generate unique session GUID
       const sessionGuid = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-      // Calculate expiry date
       const startDate = new Date();
-      const expiryDate = new Date(startDate.getTime() + tier.durationHours * 60 * 60 * 1000);
+      const durationSeconds = tier.durationHours * 60 * 60;
+      const expiryDate = new Date(startDate.getTime() + durationSeconds * 1000);
+      const clientIp = networkManager.getClientIp(req);
 
-      // Create access session
+      // Create access session with clientIp in SQLite
       const accessSession = await storage.createAccessSession({
         sessionGuid,
         userIdentifier,
+        clientIp,
         tierId: tier.id,
         tierName: tier.name,
         paymentMethod: paymentMethod || 'stripe',
@@ -222,25 +192,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: 'active',
         nodeOperator: config.nodeInfo.operator,
         lastAccessAt: null,
-      });
+      } as any);
 
-      // Get client IP and assign to network tier
-      const clientIP = networkManager.getClientIp(req);
-      const macHeader = req.headers['x-client-mac'];
-      const clientMAC = Array.isArray(macHeader) ? macHeader[0] : macHeader; // Optional MAC from captive portal
-      
-      // Assign client to bandwidth tier
-      await networkManager.assignClientToTier(
-        clientIP,
-        accessSession.sessionGuid,
-        tier.id,
-        accessSession.expiryDate,
-        clientMAC
-      );
+      // Grant access via ipset with kernel-managed timeout
+      await networkManager.grantAccess(clientIp, durationSeconds);
 
-      console.log(`[Routes] Client ${clientIP} assigned to ${tier.name} tier`);
+      console.log(`[Routes] Client ${clientIp} granted ${tier.name} access for ${tier.durationHours}h`);
 
-      res.json({ 
+      res.json({
         success: true,
         sessionGuid: accessSession.sessionGuid,
         expiryDate: accessSession.expiryDate,
@@ -259,12 +218,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { sessionGuid } = req.params;
       const session = await storage.getAccessSession(sessionGuid);
-      
+
       if (!session) {
         return res.status(404).json({ error: "Session not found" });
       }
 
-      // Check if session is expired
       const now = new Date();
       if (session.expiryDate < now && session.status === 'active') {
         await storage.expireAccessSession(sessionGuid);
@@ -280,7 +238,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         speedMbps: session.speedMbps,
         startDate: session.startDate,
         expiryDate: session.expiryDate,
-        remainingTimeMs: Math.max(0, session.expiryDate.getTime() - now.getTime())
+        remainingTimeMs: Math.max(0, new Date(session.expiryDate).getTime() - now.getTime())
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to check access status" });
@@ -292,7 +250,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { userIdentifier } = req.params;
       const sessions = await storage.getAccessSessionsByUser(userIdentifier);
-      
+
       res.json(sessions.map(session => ({
         sessionGuid: session.sessionGuid,
         tierName: session.tierName,
@@ -314,16 +272,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { sessionGuid } = req.params;
       const { dataUsedMB } = req.body;
-      
+
       const updatedSession = await storage.updateAccessSession(sessionGuid, {
         dataUsedMB: dataUsedMB || 0,
         lastAccessAt: new Date()
       });
-      
+
       if (!updatedSession) {
         return res.status(404).json({ error: "Session not found" });
       }
-      
+
       res.json({ success: true, dataUsedMB: updatedSession.dataUsedMB });
     } catch (error) {
       res.status(500).json({ error: "Failed to update usage" });
@@ -334,16 +292,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/admin/login", async (req, res) => {
     try {
       const { password } = req.body;
-      
+
       if (!config?.admin?.dashboardEnabled) {
         return res.status(404).json({ error: "Admin dashboard not enabled" });
       }
 
       if (password === config.admin.password) {
-        // In production, use proper JWT tokens
         const token = `admin_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        res.json({ 
-          success: true, 
+        res.json({
+          success: true,
           token,
           nodeInfo: config.nodeInfo
         });
@@ -355,66 +312,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Admin dashboard analytics
+  // Admin analytics — use SQLiteStorage.getAnalytics() if available, else fallback
   app.get("/api/admin/analytics", async (req, res) => {
     try {
       const { authorization } = req.headers;
-      
+
       if (!authorization || !authorization.startsWith('Bearer admin_token_')) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Use fallback analytics calculation for now
+      if (storage.getAnalytics) {
+        const analytics = await storage.getAnalytics();
+        return res.json(analytics);
+      }
+
+      // Fallback (shouldn't happen with SQLiteStorage)
       const allSessions = await storage.getActiveAccessSessions();
-      const analytics = {
+      res.json({
         totalSessions: allSessions.length,
         activeSessions: allSessions.length,
-        todaySessions: allSessions.filter(s => {
-          const today = new Date();
-          const sessionDate = new Date(s.createdAt);
-          return sessionDate.toDateString() === today.toDateString();
-        }).length,
-        weekSessions: allSessions.filter(s => {
-          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-          return new Date(s.createdAt) > weekAgo;
-        }).length,
-        totalDataUsed: allSessions.reduce((sum, s) => sum + (s.dataUsedMB || 0), 0),
-        totalRevenue: allSessions.reduce((sum, s) => {
-          const prices = { 'Free Access': 0, 'Premium Speed': 2.99, 'Unlimited Pro': 19.99 };
-          return sum + (prices[s.tierName as keyof typeof prices] || 0);
-        }, 0),
-        tierStats: {
-          free: { 
-            name: 'Free Access', 
-            count: allSessions.filter(s => s.tierName === 'Free Access').length, 
-            revenue: 0 
-          },
-          premium: { 
-            name: 'Premium Speed', 
-            count: allSessions.filter(s => s.tierName === 'Premium Speed').length, 
-            revenue: allSessions.filter(s => s.tierName === 'Premium Speed').length * 2.99 
-          },
-          unlimited: { 
-            name: 'Unlimited Pro', 
-            count: allSessions.filter(s => s.tierName === 'Unlimited Pro').length, 
-            revenue: allSessions.filter(s => s.tierName === 'Unlimited Pro').length * 19.99 
-          }
-        },
-        paymentMethods: { 
-          stripe: allSessions.filter(s => s.paymentMethod === 'stripe').length, 
-          crypto: allSessions.filter(s => s.paymentMethod === 'crypto').length 
-        },
-        recentSessions: allSessions.slice(0, 10).map(s => ({
-          sessionGuid: s.sessionGuid,
-          tierName: s.tierName,
-          paymentMethod: s.paymentMethod,
-          status: s.status,
-          dataUsedMB: s.dataUsedMB || 0,
-          createdAt: s.createdAt,
-          expiryDate: s.expiryDate
-        }))
-      };
-      res.json(analytics);
+        todaySessions: 0,
+        weekSessions: 0,
+        totalDataUsed: 0,
+        totalRevenue: 0,
+        tierStats: { free: { name: 'Free Access', count: 0, revenue: 0 }, premium: { name: 'Premium Speed', count: 0, revenue: 0 }, unlimited: { name: 'Unlimited Pro', count: 0, revenue: 0 } },
+        paymentMethods: { stripe: 0, crypto: 0 },
+        recentSessions: []
+      });
     } catch (error) {
       console.error('Admin analytics error:', error);
       res.status(500).json({ error: "Failed to fetch analytics" });
@@ -425,16 +349,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/admin/sessions", async (req, res) => {
     try {
       const { authorization } = req.headers;
-      
+
       if (!authorization || !authorization.startsWith('Bearer admin_token_')) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
       const { status, limit = 50, offset = 0 } = req.query;
-      
-      // Get all access sessions from SQLite database
+
       const allSessions = await storage.getActiveAccessSessions();
-      
+
       let filteredSessions = allSessions;
       if (status) {
         filteredSessions = allSessions.filter(s => s.status === status);
@@ -452,6 +375,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch sessions" });
+    }
+  });
+
+  // Active network clients — read from SQLite
+  app.get("/api/network/clients", async (req, res) => {
+    try {
+      const activeSessions = await storage.getActiveAccessSessions();
+      res.json({
+        totalClients: activeSessions.length,
+        clients: activeSessions.map(s => ({
+          ip: (s as any).clientIp || 'unknown',
+          tier: s.tierName,
+          sessionGuid: s.sessionGuid,
+          expiryDate: s.expiryDate,
+          status: s.status
+        }))
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch network clients" });
+    }
+  });
+
+  // Network status (alias)
+  app.get("/api/network/status", async (req, res) => {
+    try {
+      const activeSessions = await storage.getActiveAccessSessions();
+      res.json({
+        connectedClients: activeSessions.length,
+        clients: activeSessions.map(s => ({
+          ip: (s as any).clientIp || 'unknown',
+          tier: s.tierName,
+          expiryDate: s.expiryDate
+        }))
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to get network status" });
+    }
+  });
+
+  // Disconnect client — revoke ipset + update SQLite
+  app.delete("/api/network/clients/:ip", async (req, res) => {
+    try {
+      const { ip } = req.params;
+
+      // Revoke network access
+      await networkManager.revokeAccess(ip);
+
+      // Find and expire the session in SQLite
+      const activeSessions = await storage.getActiveAccessSessions();
+      const session = activeSessions.find(s => (s as any).clientIp === ip);
+      if (session) {
+        await storage.expireAccessSession(session.sessionGuid);
+      }
+
+      res.json({ success: true, message: `Client ${ip} disconnected` });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to remove client" });
+    }
+  });
+
+  // Admin: delete/expire session by ID
+  app.delete("/api/admin/sessions/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Find session by numeric ID
+      const activeSessions = await storage.getActiveAccessSessions();
+      const session = activeSessions.find(s => s.id === parseInt(id));
+
+      if (session) {
+        // Revoke network access if we have the IP
+        if ((session as any).clientIp) {
+          await networkManager.revokeAccess((session as any).clientIp);
+        }
+        await storage.expireAccessSession(session.sessionGuid);
+      }
+
+      res.json({ success: true, message: "Session deleted successfully" });
+    } catch (error) {
+      console.error("Delete session error:", error);
+      res.status(500).json({ error: "Failed to delete session" });
+    }
+  });
+
+  // Admin: update session
+  app.put("/api/admin/sessions/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+
+      const allSessions = await storage.getActiveAccessSessions();
+      const session = allSessions.find(s => s.id === parseInt(id));
+
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      const updatedSession = await storage.updateAccessSession(session.sessionGuid, updates);
+
+      if (!updatedSession) {
+        return res.status(404).json({ error: "Failed to update session" });
+      }
+
+      res.json({ success: true, session: updatedSession });
+    } catch (error) {
+      console.error("Update session error:", error);
+      res.status(500).json({ error: "Failed to update session" });
     }
   });
 
@@ -480,11 +510,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { walletAddress } = req.params;
       let user = await storage.getUserByWallet(walletAddress);
-      
+
       if (!user) {
         user = await storage.createUser({ walletAddress });
       }
-      
+
       res.json(user);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch user" });
@@ -496,11 +526,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { walletAddress } = req.params;
       const user = await storage.getUserByWallet(walletAddress);
-      
+
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      
+
       const sessions = await storage.getHotspotSessions(user.id);
       res.json(sessions);
     } catch (error) {
@@ -512,7 +542,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/sessions", async (req, res) => {
     try {
       const { walletAddress, packageId, networkId } = createSessionSchema.parse(req.body);
-      
+
       let user = await storage.getUserByWallet(walletAddress);
       if (!user) {
         user = await storage.createUser({ walletAddress });
@@ -520,14 +550,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const pkg = await storage.getBandwidthPackage(packageId);
       const network = await storage.getL2Network(networkId);
-      
+
       if (!pkg || !network) {
         return res.status(400).json({ error: "Invalid package or network" });
       }
 
-      // Generate mock transaction hash
       const transactionHash = `0x${Math.random().toString(16).substr(2, 64)}`;
-      
+
       const session = await storage.createHotspotSession({
         userId: user.id,
         packageId,
@@ -553,32 +582,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { sessionId } = req.params;
       const session = await storage.getHotspotSession(parseInt(sessionId));
-      
+
       if (!session) {
         return res.status(404).json({ error: "Session not found" });
       }
 
       const network = await storage.getL2Network(session.networkId);
       const pkg = await storage.getBandwidthPackage(session.packageId);
-      
+
       if (!network || !pkg) {
         return res.status(400).json({ error: "Invalid session data" });
       }
 
-      // Create mock transaction
       const transaction = await storage.createTransaction({
         sessionId: session.id,
         hash: session.transactionHash,
         networkId: session.networkId,
-        fromAddress: "0x742d35cc6abc0532925bd6ab1d2982ea87b25ff7", // Mock wallet address
-        toAddress: "0x1234567890abcdef1234567890abcdef12345678", // Mock contract address
+        fromAddress: "0x742d35cc6abc0532925bd6ab1d2982ea87b25ff7",
+        toAddress: "0x1234567890abcdef1234567890abcdef12345678",
         amount: pkg.priceMeshTokens,
         gasUsed: network.gasPrice,
         status: "pending",
         blockNumber: null,
       });
 
-      // Simulate L2 transaction processing
       setTimeout(async () => {
         await storage.updateTransaction(transaction.hash, {
           status: "confirmed",
@@ -587,7 +614,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const startTime = new Date();
         const endTime = new Date(startTime.getTime() + pkg.durationHours * 60 * 60 * 1000);
-        
+
         await storage.updateHotspotSession(session.id, {
           status: "active",
           startTime,
@@ -606,117 +633,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { hash } = req.params;
       const transaction = await storage.getTransaction(hash);
-      
+
       if (!transaction) {
         return res.status(404).json({ error: "Transaction not found" });
       }
-      
+
       res.json(transaction);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch transaction" });
     }
   });
 
-  // Update session data usage (for demonstration)
+  // Update session data usage
   app.patch("/api/sessions/:sessionId/usage", async (req, res) => {
     try {
       const { sessionId } = req.params;
       const { dataUsedMB } = req.body;
-      
+
       const session = await storage.updateHotspotSession(parseInt(sessionId), {
         dataUsedMB: dataUsedMB || 0,
       });
-      
+
       if (!session) {
         return res.status(404).json({ error: "Session not found" });
       }
-      
+
       res.json(session);
     } catch (error) {
       res.status(500).json({ error: "Failed to update session" });
     }
   });
 
-  // Network management endpoints
-  app.get("/api/network/clients", async (req, res) => {
-    try {
-      const clients = networkManager.getActiveClients();
-      res.json({ 
-        totalClients: clients.length,
-        clients: clients.map(client => ({
-          ip: client.ip,
-          mac: client.mac,
-          tier: client.tier.name,
-          sessionGuid: client.sessionGuid,
-          expiryDate: client.expiryDate,
-          downloadLimit: `${client.tier.downloadKbps} kbps`,
-          uploadLimit: `${client.tier.uploadKbps} kbps`
-        }))
-      });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch network clients" });
-    }
-  });
-
-  // Remove client from network tier (admin only)
-  app.delete("/api/network/clients/:ip", async (req, res) => {
-    try {
-      const { ip } = req.params;
-      await networkManager.expireClient(ip);
-      res.json({ success: true, message: `Client ${ip} removed from network tier` });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to remove client" });
-    }
-  });
-
-  // Database management endpoints for admin
-  app.delete("/api/admin/sessions/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const sessionId = parseInt(id);
-      
-      // Get session details before deletion for network cleanup
-      const session = await storage.getAccessSession(`session_${sessionId}`);
-      
-      // Remove from database (implement this method in storage)
-      await storage.expireAccessSession(`session_${sessionId}`);
-      
-      res.json({ success: true, message: "Session deleted successfully" });
-    } catch (error) {
-      console.error("Delete session error:", error);
-      res.status(500).json({ error: "Failed to delete session" });
-    }
-  });
-
-  app.put("/api/admin/sessions/:id", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const updates = req.body;
-      
-      // Find session by searching through all sessions
-      const allSessions = await storage.getActiveAccessSessions();
-      const session = allSessions.find(s => s.id === parseInt(id));
-      
-      if (!session) {
-        return res.status(404).json({ error: "Session not found" });
-      }
-
-      // Update session
-      const updatedSession = await storage.updateAccessSession(session.sessionGuid, updates);
-      
-      if (!updatedSession) {
-        return res.status(404).json({ error: "Failed to update session" });
-      }
-
-      res.json({ success: true, session: updatedSession });
-    } catch (error) {
-      console.error("Update session error:", error);
-      res.status(500).json({ error: "Failed to update session" });
-    }
-  });
-
-  // Initialize network management
+  // ─── Initialize network + restore sessions from SQLite ───────────────────
   await networkManager.initialize();
+
+  // Boot restoration: re-add active sessions to ipset
+  try {
+    const activeSessions = await storage.getActiveAccessSessions();
+    let restored = 0;
+    const now = Date.now();
+
+    for (const session of activeSessions) {
+      const ip = (session as any).clientIp;
+      if (!ip) continue;
+
+      const remainingMs = new Date(session.expiryDate).getTime() - now;
+      const remainingSeconds = Math.ceil(remainingMs / 1000);
+
+      if (remainingSeconds > 0) {
+        await networkManager.grantAccess(ip, remainingSeconds);
+        restored++;
+      } else {
+        await storage.expireAccessSession(session.sessionGuid);
+      }
+    }
+
+    if (restored > 0) {
+      console.log(`[Routes] Restored ${restored} active sessions from SQLite to ipset`);
+    }
+  } catch (error) {
+    console.error('[Routes] Failed to restore sessions from SQLite:', error);
+  }
 
   const httpServer = createServer(app);
   return httpServer;
