@@ -113,11 +113,12 @@ export class SQLiteStorage implements IStorage {
       )
     `);
 
-    // Migration: add clientIp column if missing (existing DBs)
-    try {
-      this.db.exec(`ALTER TABLE access_sessions ADD COLUMN clientIp TEXT`);
-    } catch {
-      // Column already exists
+    // Migrations: add columns if missing (existing DBs)
+    for (const migration of [
+      `ALTER TABLE access_sessions ADD COLUMN clientIp TEXT`,
+      `ALTER TABLE access_sessions ADD COLUMN price REAL NOT NULL DEFAULT 0`,
+    ]) {
+      try { this.db.exec(migration); } catch { /* Column already exists */ }
     }
 
     // Create indexes for performance

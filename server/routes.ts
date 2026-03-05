@@ -38,8 +38,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new Error("Configuration not loaded");
       }
 
-      const publicConfig = {
+      // Filter out disabled tiers before sending to client
+      const filteredConfig = {
         ...config,
+        pricing: {
+          ...config.pricing,
+          tiers: config.pricing.tiers.filter((t: any) => t.enabled !== false),
+        },
+      };
+
+      const publicConfig = {
+        ...filteredConfig,
         stripe: {
           enabled: config.stripe?.enabled || false,
           expressCheckout: config.stripe?.expressCheckout || false,
@@ -91,7 +100,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const tier = config.pricing.tiers.find((t: any) => t.id === tierId);
-      if (!tier || tier.isFree) {
+      if (!tier || tier.isFree || tier.enabled === false) {
         return res.status(400).json({ error: "Invalid tier for Stripe checkout" });
       }
 
@@ -144,7 +153,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const tier = config.pricing.tiers.find((t: any) => t.id === tierId);
-      if (!tier) {
+      if (!tier || tier.enabled === false) {
         return res.status(400).json({ error: "Invalid tier" });
       }
 
@@ -194,10 +203,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         lastAccessAt: null,
       } as any);
 
-      // Grant access via ipset with kernel-managed timeout
-      await networkManager.grantAccess(clientIp, durationSeconds);
+      // Grant access via ipset with kernel-managed timeout + bandwidth shaping
+      const speedMbps = parseFloat(tier.speedMbps) || undefined;
+      await networkManager.grantAccess(clientIp, durationSeconds, speedMbps);
 
-      console.log(`[Routes] Client ${clientIp} granted ${tier.name} access for ${tier.durationHours}h`);
+      console.log(`[Routes] Client ${clientIp} granted ${tier.name} access for ${tier.durationHours}h (${speedMbps ?? 'no'} Mbps cap)`);
 
       res.json({
         success: true,
@@ -681,7 +691,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const remainingSeconds = Math.ceil(remainingMs / 1000);
 
       if (remainingSeconds > 0) {
-        await networkManager.grantAccess(ip, remainingSeconds);
+        const speedMbps = parseFloat((session as any).speedMbps) || undefined;
+        await networkManager.grantAccess(ip, remainingSeconds, speedMbps);
         restored++;
       } else {
         await storage.expireAccessSession(session.sessionGuid);

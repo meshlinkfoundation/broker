@@ -34,6 +34,7 @@ interface ConfigTier {
   buttonColor: string;
   isFree: boolean;
   isPopular: boolean;
+  enabled?: boolean;
   acceptStripePayments: boolean;
   acceptCryptoPayments: boolean;
 }
