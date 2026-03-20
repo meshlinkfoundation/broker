@@ -2,7 +2,7 @@
   "nodeInfo": {
     "name": "MeshLink_Free",
     "location": "Downtown WiFi Hub",
-    "operator": "Community Node #142"
+    "operator": "Community Node #42"
   },
   "pricing": {
     "currency": "MESH",
@@ -16,7 +16,7 @@
         "fiatPrice": 0,
         "dataLimitMB": 500,
         "durationHours": 24,
-        "speedMbps": 1,
+        "speedMbps": 5,
         "features": [
           "500MB daily limit",
           "1 Mbps speed",
@@ -36,7 +36,7 @@
         "name": "Lightweight",
         "description": "Moderate speed for social media and casual browsing",
         "price": 15,
-        "fiatPrice": 4.99,
+        "fiatPrice": 5.99,
         "dataLimitMB": 2048,
         "durationHours": 168,
         "speedMbps": 25,
@@ -46,7 +46,7 @@
           "Social media & browsing",
           "Email support"
         ],
-        "buttonText": "Pay $4.99",
+        "buttonText": "Pay $5.99",
         "buttonColor": "blue",
         "isFree": false,
         "isPopular": true,

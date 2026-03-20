@@ -1,22 +1,19 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Label } from "@/components/ui/label";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  Users, 
-  Activity, 
-  DollarSign, 
-  Database, 
-  Clock,
-  Shield,
-  Eye,
-  LogOut,
-  Wifi,
-  TrendingUp
+import {
+  Users, Activity, DollarSign, Database, Shield, LogOut, Wifi,
+  Edit, Trash2, RefreshCw, Search
 } from "lucide-react";
 
 interface Analytics {
@@ -39,18 +36,37 @@ interface Analytics {
   }>;
 }
 
-interface Session {
+interface AccessSession {
+  id: number;
   sessionGuid: string;
   userIdentifier: string;
+  clientIp?: string;
+  tierId: string;
   tierName: string;
   paymentMethod: string;
+  paymentReference: string | null;
   status: string;
+  startDate: string;
+  expiryDate: string;
   dataLimitMB: number;
   dataUsedMB: number;
   speedMbps: string;
-  startDate: string;
-  expiryDate: string;
+  nodeOperator: string;
   createdAt: string;
+  lastAccessAt: string | null;
+}
+
+interface NetworkClient {
+  ip: string;
+  tier: string;
+  sessionGuid: string;
+  expiryDate: string;
+  status: string;
+  speedMbps?: string;
+}
+
+interface EditFormData {
+  [key: string]: string | number | boolean;
 }
 
 export default function AdminDashboard() {
@@ -59,11 +75,15 @@ export default function AdminDashboard() {
   const [isLogging, setIsLogging] = useState(false);
   const [authToken, setAuthToken] = useState("");
   const [nodeInfo, setNodeInfo] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'sessions' | 'analytics'>('overview');
-  
-  const { toast } = useToast();
+  const [activeTab, setActiveTab] = useState<'overview' | 'clients' | 'sessions' | 'analytics'>('overview');
+  const [searchTerm, setSearchTerm] = useState("");
+  const [editingRecord, setEditingRecord] = useState<AccessSession | null>(null);
+  const [editFormData, setEditFormData] = useState<EditFormData>({});
+  const [showEditDialog, setShowEditDialog] = useState(false);
 
-  // Check for existing auth token
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
     if (token) {
@@ -79,9 +99,7 @@ export default function AdminDashboard() {
     try {
       const response = await fetch('/api/admin/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       });
 
@@ -125,44 +143,156 @@ export default function AdminDashboard() {
     });
   };
 
-  // Fetch analytics data
-  const { data: analytics, isLoading: analyticsLoading } = useQuery<Analytics>({
+  // Fetch analytics
+  const { data: analytics } = useQuery<Analytics>({
     queryKey: ["/api/admin/analytics"],
     queryFn: async () => {
       const response = await fetch('/api/admin/analytics', {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
+        headers: { 'Authorization': `Bearer ${authToken}` },
       });
-      if (!response.ok) {
-        throw new Error('Failed to fetch analytics');
-      }
+      if (!response.ok) throw new Error('Failed to fetch analytics');
       return response.json();
     },
     enabled: isAuthenticated && !!authToken,
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: 30000,
   });
 
-  // Fetch sessions data
+  // Fetch sessions
   const { data: sessionsData, isLoading: sessionsLoading } = useQuery<{
-    sessions: Session[];
+    sessions: AccessSession[];
     total: number;
   }>({
     queryKey: ["/api/admin/sessions"],
     queryFn: async () => {
-      const response = await fetch('/api/admin/sessions?limit=20', {
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-        },
+      const response = await fetch('/api/admin/sessions?limit=100', {
+        headers: { 'Authorization': `Bearer ${authToken}` },
       });
-      if (!response.ok) {
-        throw new Error('Failed to fetch sessions');
-      }
+      if (!response.ok) throw new Error('Failed to fetch sessions');
       return response.json();
     },
     enabled: isAuthenticated && !!authToken,
-    refetchInterval: 15000, // Refresh every 15 seconds
+    refetchInterval: 15000,
   });
+
+  // Fetch network clients
+  const { data: clientsData, isLoading: clientsLoading } = useQuery<{
+    totalClients: number;
+    clients: NetworkClient[];
+  }>({
+    queryKey: ["/api/network/clients"],
+    queryFn: async () => {
+      const response = await fetch('/api/network/clients', {
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (!response.ok) throw new Error('Failed to fetch clients');
+      return response.json();
+    },
+    enabled: isAuthenticated && !!authToken,
+    refetchInterval: 15000,
+  });
+
+  // Delete session
+  const deleteSessionMutation = useMutation({
+    mutationFn: async (sessionId: number) => {
+      const response = await fetch(`/api/admin/sessions/${sessionId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (!response.ok) throw new Error('Failed to delete session');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/network/clients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/analytics"] });
+      toast({ title: "Success", description: "Session deleted" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to delete session", variant: "destructive" });
+    },
+  });
+
+  // Update session
+  const updateSessionMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: EditFormData }) => {
+      const response = await fetch(`/api/admin/sessions/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error('Failed to update session');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/sessions"] });
+      setShowEditDialog(false);
+      setEditingRecord(null);
+      toast({ title: "Success", description: "Session updated" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update session", variant: "destructive" });
+    },
+  });
+
+  // Disconnect client
+  const removeClientMutation = useMutation({
+    mutationFn: async (clientIp: string) => {
+      const response = await fetch(`/api/network/clients/${clientIp}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${authToken}` },
+      });
+      if (!response.ok) throw new Error('Failed to disconnect client');
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/network/clients"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/sessions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/analytics"] });
+      toast({ title: "Success", description: "Client disconnected" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to disconnect client", variant: "destructive" });
+    },
+  });
+
+  const handleEditRecord = (record: AccessSession) => {
+    setEditingRecord(record);
+    setEditFormData(record as any);
+    setShowEditDialog(true);
+  };
+
+  const handleFormChange = (field: string, value: string | number | boolean) => {
+    setEditFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleUpdateRecord = () => {
+    if (editingRecord) {
+      updateSessionMutation.mutate({ id: editingRecord.id, data: editFormData });
+    }
+  };
+
+  const handleRefresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/sessions"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/network/clients"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/analytics"] });
+    toast({ title: "Refreshed", description: "Dashboard data refreshed" });
+  };
+
+  // Filtering
+  const filteredSessions = sessionsData?.sessions.filter((session) =>
+    session.userIdentifier.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    session.sessionGuid.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    session.tierName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (session.clientIp && session.clientIp.includes(searchTerm))
+  ) || [];
+
+  const filteredClients = clientsData?.clients.filter((client) =>
+    client.ip.includes(searchTerm) ||
+    client.tier.toLowerCase().includes(searchTerm.toLowerCase())
+  ) || [];
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 MB';
@@ -241,6 +371,13 @@ export default function AdminDashboard() {
                 Overview
               </Button>
               <Button
+                variant={activeTab === 'clients' ? 'default' : 'outline'}
+                onClick={() => setActiveTab('clients')}
+                size="sm"
+              >
+                Clients
+              </Button>
+              <Button
                 variant={activeTab === 'sessions' ? 'default' : 'outline'}
                 onClick={() => setActiveTab('sessions')}
                 size="sm"
@@ -254,13 +391,8 @@ export default function AdminDashboard() {
               >
                 Analytics
               </Button>
-              <Button
-                variant="outline"
-                onClick={() => window.location.href = '/admin/database'}
-                size="sm"
-              >
-                <Database className="w-4 h-4 mr-2" />
-                Database
+              <Button variant="outline" onClick={handleRefresh} size="sm">
+                <RefreshCw className="w-4 h-4" />
               </Button>
             </div>
             <Button variant="outline" onClick={handleLogout} size="sm">
@@ -273,7 +405,6 @@ export default function AdminDashboard() {
         {/* Overview Tab */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Key Metrics */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -332,7 +463,6 @@ export default function AdminDashboard() {
               </Card>
             </div>
 
-            {/* Recent Activity */}
             <Card>
               <CardHeader>
                 <CardTitle>Recent Activity</CardTitle>
@@ -366,53 +496,208 @@ export default function AdminDashboard() {
           </div>
         )}
 
+        {/* Clients Tab */}
+        {activeTab === 'clients' && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Connected Clients</CardTitle>
+                  <p className="text-gray-600 text-sm mt-1">{clientsData?.totalClients || 0} active clients on the network</p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Search className="w-4 h-4 text-gray-400" />
+                  <Input
+                    placeholder="Search by IP or tier..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-64"
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="border rounded-lg">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>IP Address</TableHead>
+                      <TableHead>Tier</TableHead>
+                      <TableHead>Speed</TableHead>
+                      <TableHead>Expiry</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {clientsLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8">Loading clients...</TableCell>
+                      </TableRow>
+                    ) : filteredClients.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-gray-500">No active clients</TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredClients.map((client, index) => (
+                        <TableRow key={index}>
+                          <TableCell className="font-mono">{client.ip}</TableCell>
+                          <TableCell>
+                            <Badge variant={client.tier === 'Free Access' ? 'secondary' : 'default'}>
+                              {client.tier}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{client.speedMbps ? `${client.speedMbps} Mbps` : '\u2014'}</TableCell>
+                          <TableCell className="text-sm">
+                            {new Date(client.expiryDate).toLocaleString()}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={getStatusColor(client.status)}>
+                              {client.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button size="sm" variant="destructive">
+                                  Disconnect
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Disconnect Client</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Disconnect {client.ip} from the network? This will immediately revoke their internet access.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => removeClientMutation.mutate(client.ip)}
+                                    className="bg-red-600 hover:bg-red-700"
+                                  >
+                                    Disconnect
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Sessions Tab */}
         {activeTab === 'sessions' && (
           <Card>
             <CardHeader>
-              <CardTitle>Active Sessions</CardTitle>
-              <p className="text-gray-600">Real-time session monitoring</p>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Sessions</CardTitle>
+                  <p className="text-gray-600 text-sm mt-1">{sessionsData?.total || 0} total sessions</p>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Search className="w-4 h-4 text-gray-400" />
+                  <Input
+                    placeholder="Search by user, tier, IP..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-64"
+                  />
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {sessionsData?.sessions.map((session) => (
-                  <div key={session.sessionGuid} className="border rounded-lg p-4">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <p className="font-medium">{session.tierName}</p>
-                        <p className="text-sm text-gray-600">
-                          User: {session.userIdentifier.substring(0, 16)}...
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Speed: {session.speedMbps} Mbps
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600">Data Usage</p>
-                        <Progress 
-                          value={(session.dataUsedMB / session.dataLimitMB) * 100} 
-                          className="w-full mt-1"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          {formatBytes(session.dataUsedMB)} / {formatBytes(session.dataLimitMB)}
-                        </p>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <Badge className={getStatusColor(session.status)}>
-                            {session.status}
-                          </Badge>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Expires: {new Date(session.expiryDate).toLocaleString()}
-                          </p>
-                        </div>
-                        <Badge variant="outline">
-                          {session.paymentMethod}
-                        </Badge>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              <div className="border rounded-lg">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>IP</TableHead>
+                      <TableHead>User</TableHead>
+                      <TableHead>Tier</TableHead>
+                      <TableHead>Speed</TableHead>
+                      <TableHead>Data Usage</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Expiry</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sessionsLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8">Loading sessions...</TableCell>
+                      </TableRow>
+                    ) : filteredSessions.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center py-8 text-gray-500">No sessions found</TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredSessions.map((session) => (
+                        <TableRow key={session.id}>
+                          <TableCell className="font-mono text-xs">{session.clientIp || '\u2014'}</TableCell>
+                          <TableCell className="text-sm max-w-[140px] truncate">{session.userIdentifier}</TableCell>
+                          <TableCell>
+                            <Badge variant={session.tierId === 'free' ? 'secondary' : 'default'}>
+                              {session.tierName}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{session.speedMbps} Mbps</TableCell>
+                          <TableCell>
+                            <div className="text-sm">{session.dataUsedMB} / {session.dataLimitMB} MB</div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={session.status === 'active' ? 'default' : 'destructive'}>
+                              {session.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {new Date(session.expiryDate).toLocaleString()}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleEditRecord(session)}
+                              >
+                                <Edit className="w-3 h-3" />
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button size="sm" variant="destructive">
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Session</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure? This will revoke access and cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => deleteSessionMutation.mutate(session.id)}
+                                      className="bg-red-600 hover:bg-red-700"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               </div>
             </CardContent>
           </Card>
@@ -422,7 +707,6 @@ export default function AdminDashboard() {
         {activeTab === 'analytics' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Payment Methods */}
               <Card>
                 <CardHeader>
                   <CardTitle>Payment Methods</CardTitle>
@@ -441,7 +725,6 @@ export default function AdminDashboard() {
                 </CardContent>
               </Card>
 
-              {/* Tier Performance */}
               <Card>
                 <CardHeader>
                   <CardTitle>Tier Performance</CardTitle>
@@ -466,6 +749,90 @@ export default function AdminDashboard() {
           </div>
         )}
       </div>
+
+      {/* Edit Session Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Session</DialogTitle>
+            <DialogDescription>
+              Update session details and settings
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingRecord && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="status">Status</Label>
+                <Select
+                  value={editFormData.status as string}
+                  onValueChange={(value) => handleFormChange('status', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="expired">Expired</SelectItem>
+                    <SelectItem value="suspended">Suspended</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="dataUsedMB">Data Used (MB)</Label>
+                <Input
+                  id="dataUsedMB"
+                  type="number"
+                  value={editFormData.dataUsedMB as number}
+                  onChange={(e) => handleFormChange('dataUsedMB', parseInt(e.target.value))}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="dataLimitMB">Data Limit (MB)</Label>
+                <Input
+                  id="dataLimitMB"
+                  type="number"
+                  value={editFormData.dataLimitMB as number}
+                  onChange={(e) => handleFormChange('dataLimitMB', parseInt(e.target.value))}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="speedMbps">Speed (Mbps)</Label>
+                <Input
+                  id="speedMbps"
+                  value={editFormData.speedMbps as string}
+                  onChange={(e) => handleFormChange('speedMbps', e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="expiryDate">Expiry Date</Label>
+                <Input
+                  id="expiryDate"
+                  type="datetime-local"
+                  value={editFormData.expiryDate ? new Date(editFormData.expiryDate as string).toISOString().slice(0, 16) : ''}
+                  onChange={(e) => handleFormChange('expiryDate', new Date(e.target.value).toISOString())}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleUpdateRecord}
+              disabled={updateSessionMutation.isPending}
+            >
+              {updateSessionMutation.isPending ? "Updating..." : "Update Session"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

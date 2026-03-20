@@ -6,7 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import CaptivePortal from "@/pages/captive-portal";
 import Dashboard from "@/pages/dashboard";
 import AdminDashboard from "@/pages/admin-dashboard";
-import DatabaseManager from "@/pages/database-manager";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -15,7 +14,6 @@ function Router() {
       <Route path="/" component={CaptivePortal} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/admin" component={AdminDashboard} />
-      <Route path="/admin/database" component={DatabaseManager} />
       <Route component={CaptivePortal} />
     </Switch>
   );

@@ -399,7 +399,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tier: s.tierName,
           sessionGuid: s.sessionGuid,
           expiryDate: s.expiryDate,
-          status: s.status
+          status: s.status,
+          speedMbps: (s as any).speedMbps || null
         }))
       });
     } catch (error) {
