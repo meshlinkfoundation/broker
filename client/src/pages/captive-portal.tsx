@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { WalletConnect } from "@/components/wallet-connect";
+// WalletConnect removed from header — connection is triggered inline in the checkout flow
 import { useWallet } from "@/hooks/use-wallet";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
@@ -18,7 +18,7 @@ import {
   CreditCard,
   Wallet
 } from "lucide-react";
-import { web3Provider } from "@/lib/web3-mock";
+import { useCryptoPayment, type PaymentNetwork } from "@/hooks/use-crypto-payment";
 
 interface ConfigTier {
   id: string;
@@ -43,7 +43,13 @@ interface CryptoNetworkConfig {
   chainId: number;
   chainName: string;
   rpcUrl: string;
-  contractAddress: string;
+  // New (Phase 2): split into token + payment addresses
+  tokenAddress?: string;
+  paymentContractAddress?: string;
+  operatorWallet?: string;
+  explorerUrl?: string;
+  // Old (still present in legacy configs): single contractAddress
+  contractAddress?: string;
   tokenSymbol: string;
   tokenDecimals: number;
 }
@@ -102,13 +108,27 @@ export default function CaptivePortal() {
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [paymentStep, setPaymentStep] = useState<'select' | 'method' | 'paying' | 'confirming' | 'complete'>('select');
-  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'crypto' | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'crypto' | 'eth' | null>(null);
   const [transactionHash, setTransactionHash] = useState<string>('');
   const [accessSession, setAccessSession] = useState<any>(null);
-  
-  const { wallet, getCurrentNetwork, switchNetwork } = useWallet();
+  const [pendingCryptoTierId, setPendingCryptoTierId] = useState<string | null>(null);
+
+  const { wallet, getCurrentNetwork, switchNetwork, connectWallet } = useWallet();
   const { toast } = useToast();
   const currentNetwork = getCurrentNetwork();
+
+  const { payForTier: runCryptoPayment } = useCryptoPayment();
+
+  // When a wallet connects and there's a pending crypto intent, proceed automatically.
+  useEffect(() => {
+    if (wallet.isConnected && pendingCryptoTierId && config) {
+      const tier = config.pricing.tiers.find((t: ConfigTier) => t.id === pendingCryptoTierId);
+      if (tier) {
+        setPendingCryptoTierId(null);
+        processCryptoPayment(tier);
+      }
+    }
+  }, [wallet.isConnected, pendingCryptoTierId]);
 
   // Load node configuration
   const { data: config, isLoading: configLoading } = useQuery<NodeConfig>({
@@ -211,23 +231,11 @@ export default function CaptivePortal() {
       return;
     }
 
-    // Check available payment methods
-    const hasStripe = tier.acceptStripePayments;
-    const hasCrypto = tier.acceptCryptoPayments;
-    
-    // If tier has multiple payment methods, show selection
-    if (hasStripe && hasCrypto) {
-      setPaymentStep('method');
-      return;
-    }
-
-    // Single payment method - proceed directly
-    const method = hasStripe ? 'stripe' : 'crypto';
-    setPaymentMethod(method);
-    await initiatePayment(tier, method);
+    // Always show method selection for paid tiers — MESH or ETH
+    setPaymentStep('method');
   };
 
-  const handlePaymentMethodSelect = async (method: 'stripe' | 'crypto') => {
+  const handlePaymentMethodSelect = async (method: 'stripe' | 'crypto' | 'eth') => {
     setPaymentMethod(method);
     
     if (!config || !selectedPlan) return;
@@ -238,17 +246,17 @@ export default function CaptivePortal() {
     await initiatePayment(tier, method);
   };
 
-  const initiatePayment = async (tier: ConfigTier, method: 'stripe' | 'crypto') => {
+  const initiatePayment = async (tier: ConfigTier, method: 'stripe' | 'crypto' | 'eth') => {
     if (method === 'stripe') {
       await processStripePayment(tier);
+    } else if (method === 'eth') {
+      await processEthPayment(tier);
     } else {
-      // For crypto payments, check wallet connection
+      // For crypto payments, open wallet modal inline if not yet connected.
+      // The useEffect above will auto-proceed once connection completes.
       if (!wallet.isConnected) {
-        toast({
-          title: "Wallet Required",
-          description: "Please connect your wallet to purchase with crypto.",
-          variant: "destructive",
-        });
+        setPendingCryptoTierId(tier.id);
+        await connectWallet();
         return;
       }
 
@@ -409,55 +417,86 @@ export default function CaptivePortal() {
   };
 
   const processCryptoPayment = async (tier: ConfigTier) => {
-    const amount = tier.price.toString();
-    // Use payments.crypto.network with fallback to top-level network
-    const cryptoNetwork = config!.payments?.crypto?.network ?? config!.network;
+    const cryptoNetwork: CryptoNetworkConfig = config!.payments?.crypto?.network ?? config!.network;
+    const tokenAddress = cryptoNetwork.tokenAddress ?? cryptoNetwork.contractAddress;
+    const paymentContractAddress = cryptoNetwork.paymentContractAddress;
+
+    if (!tokenAddress || !paymentContractAddress) {
+      toast({
+        title: "Crypto not configured",
+        description: "This node has not finished crypto setup. Try paying by card.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const network: PaymentNetwork = {
+      chainId: cryptoNetwork.chainId,
+      tokenAddress: tokenAddress as `0x${string}`,
+      paymentContractAddress: paymentContractAddress as `0x${string}`,
+      tokenSymbol: cryptoNetwork.tokenSymbol,
+      tokenDecimals: cryptoNetwork.tokenDecimals,
+      explorerUrl: cryptoNetwork.explorerUrl,
+    };
 
     try {
       setPaymentStep('paying');
       setIsConnecting(true);
 
-      // Simulate transaction submission delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const result = await runCryptoPayment(tier.id, network);
+      const txHash = result.txHash;
 
-      const transaction = await web3Provider.sendTransaction({
-        from: wallet.address!,
-        to: cryptoNetwork.contractAddress,
-        value: amount,
-        gasPrice: currentNetwork?.gasPrice || "20000000000",
-        gasLimit: "100000",
-        chainId: wallet.chainId!
-      });
-
-      setTransactionHash(transaction);
-      setPaymentStep('confirming');
+      setTransactionHash(txHash);
+      setPaymentStep('complete');
 
       toast({
-        title: "Transaction Submitted",
-        description: `Transaction ${transaction.substring(0, 10)}... submitted successfully`,
+        title: "Payment Confirmed",
+        description: `Granted ${tier.name} access.`,
       });
 
-      // Simulate confirmation delay
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      const receipt = await web3Provider.waitForTransaction(transaction);
-      
-      if (receipt.status === 'success') {
-        setPaymentStep('complete');
-        setTimeout(() => {
-          window.location.href = config!.features.redirectAfterPayment;
-        }, 2000);
-      }
-
-    } catch (error) {
+      setTimeout(() => {
+        window.location.href = config!.features.redirectAfterPayment;
+      }, 1500);
+    } catch (error: any) {
       setIsConnecting(false);
       setPaymentStep('select');
       toast({
         title: "Payment Failed",
-        description: "Crypto transaction failed. Please try again.",
+        description: error?.message || "Crypto transaction failed. Please try again.",
         variant: "destructive",
       });
     }
+  };
+
+  const processEthPayment = async (tier: ConfigTier) => {
+    if (!wallet.isConnected) {
+      setPendingCryptoTierId(`eth:${tier.id}`);
+      await connectWallet();
+      return;
+    }
+
+    const cryptoNetwork = config!.payments?.crypto?.network ?? config!.network;
+    const poolAddress = cryptoNetwork.uniswapPoolAddress;
+
+    if (!poolAddress) {
+      toast({
+        title: "ETH payments not yet available",
+        description: "The MESH/ETH pool hasn't been created yet. Pay with MESH or use the free tier.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // TODO: implement atomic ETH→MESH swap + pay via Uniswap Universal Router
+    // Requires a funded MESH/ETH Uniswap v3 pool on the active network.
+    // Once the pool is live, this will:
+    //   1. Get a session from the broker
+    //   2. Calculate how much ETH = tier.price MESH at current pool price
+    //   3. Call Universal Router: swapExactETH → MESH + pay MeshPayment in one tx
+    toast({
+      title: "Coming soon",
+      description: "ETH payments are being built. Pay with MESH today or use the free tier.",
+    });
   };
 
   if (configLoading) {
@@ -572,13 +611,12 @@ export default function CaptivePortal() {
               <h1 className="text-2xl font-bold text-gray-900">{config.branding.logoText}</h1>
             </div>
             <div className="flex items-center space-x-4">
-              {currentNetwork && wallet.isConnected && (
-                <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
-                  <div className="w-2 h-2 bg-red-500 rounded-full mr-2 animate-pulse" />
-                  {currentNetwork.name}
-                </Badge>
+              {/* Network badge and wallet address only shown when connected — kept minimal */}
+              {wallet.isConnected && wallet.address && (
+                <span className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                  {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
+                </span>
               )}
-              {(config.payments?.crypto?.enabled ?? config.features.enableCrypto) && config.features.enableWalletConnection && <WalletConnect />}
             </div>
           </div>
           <div className="text-center pb-4">
@@ -586,7 +624,7 @@ export default function CaptivePortal() {
             {config.branding.showCommunityBadge && (
               <Badge className="mt-2 bg-green-100 text-green-700 border-green-200">
                 <Users className="w-4 h-4 mr-1" />
-                Community-Powered Network
+                Wi-Fi Access Available
               </Badge>
             )}
           </div>
@@ -603,7 +641,7 @@ export default function CaptivePortal() {
                 Welcome to {config.nodeInfo.name}
               </h2>
               <p className="text-xl text-gray-600 mb-6">
-                Connect to our decentralized network and choose your access level
+                Choose an access option to get online
               </p>
               <div className="flex items-center justify-center space-x-6 text-sm text-gray-500">
                 <div className="flex items-center space-x-2">
@@ -627,37 +665,6 @@ export default function CaptivePortal() {
               </div>
             </div>
 
-            {/* Smart Contract Info */}
-            {(() => {
-              const cryptoEnabled = config.payments?.crypto?.enabled ?? config.features.enableCrypto;
-              const cryptoNetwork = config.payments?.crypto?.network ?? config.network;
-
-              if (!cryptoEnabled || !wallet.isConnected || !config.features.showTransactionDetails) return null;
-
-              return (
-                <div className="mb-8">
-                  <Card className="bg-blue-50 border-blue-200">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          <Shield className="w-5 h-5 text-blue-600" />
-                          <div>
-                            <h3 className="font-semibold text-blue-900">Smart Contract Ready</h3>
-                            <p className="text-sm text-blue-700">Connected to {cryptoNetwork.chainName}</p>
-                          </div>
-                        </div>
-                        <Badge className="bg-blue-600 text-white">
-                          {currentNetwork?.name || cryptoNetwork.chainName}
-                        </Badge>
-                      </div>
-                      <div className="mt-3 text-xs text-blue-600 font-mono bg-white/50 rounded p-2 break-all">
-                        Contract: {cryptoNetwork.contractAddress}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              );
-            })()}
 
             {/* Plans */}
             <div className={`grid gap-6 mb-12 ${
@@ -732,40 +739,42 @@ export default function CaptivePortal() {
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Stripe checkout — handles card, Apple Pay, Google Pay, Link on their hosted page */}
                 {(() => {
                   const tier = config.pricing.tiers.find(t => t.id === selectedPlan);
-                  const stripeEnabled = config.payments?.stripe?.enabled ?? config.stripe.enabled;
-
-                  if (!tier?.acceptStripePayments || !stripeEnabled) return null;
+                  if (!tier) return null;
 
                   return (
-                    <Button
-                      className="w-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-2"
-                      onClick={() => handlePaymentMethodSelect('stripe')}
-                    >
-                      <CreditCard className="w-5 h-5" />
-                      Pay ${tier.fiatPrice} with Card
-                    </Button>
-                  );
-                })()}
+                    <>
+                      {/* Pay with MESH — primary path */}
+                      <Button
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2 h-14 text-base"
+                        onClick={() => handlePaymentMethodSelect('crypto')}
+                      >
+                        <Wallet className="w-5 h-5" />
+                        {wallet.isConnected
+                          ? `Pay ${tier.price} MESH`
+                          : `Connect Wallet · Pay ${tier.price} MESH`
+                        }
+                      </Button>
 
-                {/* Crypto payment option */}
-                {(() => {
-                  const tier = config.pricing.tiers.find(t => t.id === selectedPlan);
-                  const cryptoEnabled = config.payments?.crypto?.enabled ?? config.features.enableCrypto;
-                  const cryptoNetwork = config.payments?.crypto?.network ?? config.network;
+                      {/* Pay with ETH — swap via Uniswap then pay */}
+                      <Button
+                        className="w-full bg-gray-800 hover:bg-gray-900 text-white flex items-center justify-center gap-2 h-12"
+                        onClick={() => handlePaymentMethodSelect('eth')}
+                      >
+                        <span className="text-lg">⟠</span>
+                        {wallet.isConnected
+                          ? `Pay ${tier.ethPrice ?? '~'} ETH`
+                          : `Connect Wallet · Pay ${tier.ethPrice ?? '~'} ETH`
+                        }
+                      </Button>
 
-                  if (!tier?.acceptCryptoPayments || !cryptoEnabled) return null;
-
-                  return (
-                    <Button
-                      className="w-full bg-orange-600 hover:bg-orange-700 text-white flex items-center justify-center gap-2"
-                      onClick={() => handlePaymentMethodSelect('crypto')}
-                    >
-                      <Wallet className="w-5 h-5" />
-                      Pay {tier.price} {config.pricing.currency} with Crypto
-                    </Button>
+                      <p className="text-center text-xs text-gray-400">
+                        No cards. No accounts. No middlemen.
+                        <br />
+                        Don't have MESH yet? Use the free tier to get some.
+                      </p>
+                    </>
                   );
                 })()}
 
@@ -777,7 +786,7 @@ export default function CaptivePortal() {
                     setSelectedPlan(null);
                   }}
                 >
-                  Back to Plans
+                  ← Back
                 </Button>
               </CardContent>
             </Card>
@@ -945,7 +954,7 @@ export default function CaptivePortal() {
       {/* Footer */}
       <footer className="bg-white/50 border-t border-gray-200 mt-16">
         <div className="max-w-4xl mx-auto px-4 py-6 text-center text-sm text-gray-500">
-          <p>Powered by MeshLink Decentralized Network • Secure • Community-Driven</p>
+          <p>{config.branding.logoText} • Powered by meshlink • Secure Wi-Fi access</p>
         </div>
       </footer>
     </div>

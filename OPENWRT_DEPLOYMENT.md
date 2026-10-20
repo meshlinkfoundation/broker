@@ -1,6 +1,6 @@
-# OpenWRT Deployment Guide for MeshLink Captive Portal
+# OpenWRT Deployment Guide for meshlink Captive Portal
 
-This guide explains how to deploy the MeshLink captive portal on a Raspberry Pi 5 running OpenWRT with proper bandwidth management and QoS controls.
+This guide explains how to deploy the meshlink captive portal on a Raspberry Pi 5 running OpenWRT with proper bandwidth management and QoS controls.
 
 ## Prerequisites
 
@@ -59,7 +59,7 @@ uci set wireless.radio0.channel='6'
 uci set wireless.default_radio0.device='radio0'
 uci set wireless.default_radio0.network='hotspot'
 uci set wireless.default_radio0.mode='ap'
-uci set wireless.default_radio0.ssid='MeshLink_Free'
+uci set wireless.default_radio0.ssid='meshlink_Free'
 uci set wireless.default_radio0.encryption='none'
 uci set wireless.default_radio0.isolate='1'
 
@@ -105,7 +105,7 @@ start() {
     ipset create premium_clients hash:ip -exist
     ipset create unlimited_clients hash:ip -exist
     
-    echo "MeshLink ipsets created"
+    echo "meshlink ipsets created"
 }
 
 stop() {
@@ -114,7 +114,7 @@ stop() {
     ipset destroy premium_clients 2>/dev/null
     ipset destroy unlimited_clients 2>/dev/null
     
-    echo "MeshLink ipsets destroyed"
+    echo "meshlink ipsets destroyed"
 }
 
 restart() {
@@ -133,11 +133,11 @@ chmod +x /etc/init.d/meshlink-ipsets
 Add iptables rules for traffic marking:
 
 ```bash
-# Create firewall include for MeshLink
+# Create firewall include for meshlink
 cat > /etc/firewall.meshlink << 'EOF'
 #!/bin/sh
 
-# Clear existing MeshLink rules
+# Clear existing meshlink rules
 iptables -t mangle -F PREROUTING 2>/dev/null
 
 # Mark packets from different tiers
@@ -160,7 +160,7 @@ tc filter add dev br-lan protocol ip parent 1: prio 2 handle 20 fw flowid 1:20 2
 tc class add dev br-lan parent 1: classid 1:30 htb rate 100000kbit ceil 100000kbit 2>/dev/null || true
 tc filter add dev br-lan protocol ip parent 1: prio 3 handle 30 fw flowid 1:30 2>/dev/null || true
 
-echo "MeshLink traffic control configured"
+echo "meshlink traffic control configured"
 EOF
 
 chmod +x /etc/firewall.meshlink
@@ -222,14 +222,14 @@ start() {
     export PORT=5000
     nohup node server/index.js > /var/log/meshlink.log 2>&1 &
     echo $! > /var/run/meshlink.pid
-    echo "MeshLink captive portal started"
+    echo "meshlink captive portal started"
 }
 
 stop() {
     if [ -f /var/run/meshlink.pid ]; then
         kill $(cat /var/run/meshlink.pid)
         rm /var/run/meshlink.pid
-        echo "MeshLink captive portal stopped"
+        echo "meshlink captive portal stopped"
     fi
 }
 
@@ -246,14 +246,14 @@ chmod +x /etc/init.d/meshlink
 
 ## 4. Configuration Files
 
-### Create MeshLink Configuration
+### Create meshlink Configuration
 
 ```bash
 mkdir -p /opt/meshlink/server/config
 cat > /opt/meshlink/server/config/meshlink-config.json << 'EOF'
 {
   "nodeInfo": {
-    "name": "MeshLink_RaspberryPi",
+    "name": "meshlink_RaspberryPi",
     "location": "Community Hotspot",
     "operator": "Local Mesh Network"
   },
@@ -306,7 +306,7 @@ cat > /opt/meshlink/server/config/meshlink-config.json << 'EOF'
   "branding": {
     "primaryColor": "#2563eb",
     "secondaryColor": "#64748b",
-    "logoText": "MeshLink",
+    "logoText": "meshlink",
     "tagline": "Community-Powered Internet Access",
     "showCommunityBadge": true
   },
@@ -386,9 +386,9 @@ EOF
 cat > /usr/bin/meshlink-monitor << 'EOF'
 #!/bin/sh
 
-# Check if MeshLink service is running
+# Check if meshlink service is running
 if ! pgrep -f "node server/index.js" > /dev/null; then
-    echo "$(date): MeshLink service not running, restarting..." >> /var/log/meshlink-monitor.log
+    echo "$(date): meshlink service not running, restarting..." >> /var/log/meshlink-monitor.log
     /etc/init.d/meshlink restart
 fi
 
@@ -505,4 +505,4 @@ iptables -t nat -L PREROUTING -v
 - Monitor network traffic for anomalies
 - Implement rate limiting for API endpoints
 
-This deployment guide provides a complete setup for running the MeshLink captive portal on OpenWRT with proper bandwidth management and QoS controls.
+This deployment guide provides a complete setup for running the meshlink captive portal on OpenWRT with proper bandwidth management and QoS controls.

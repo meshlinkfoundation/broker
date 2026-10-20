@@ -1,9 +1,19 @@
 import "dotenv/config";
+import { createServer as createHttpsServer } from "https";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import {
+  getPortalTls,
+  guestAdminGuard,
+  portalHttpsRedirect,
+  portalSecurityHeaders,
+} from "./portal-tls";
 
 const app = express();
+app.use(guestAdminGuard());
+app.use(portalHttpsRedirect());
+app.use(portalSecurityHeaders());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
@@ -57,13 +67,24 @@ app.use((req, res, next) => {
     serveStatic(app);
   }
 
-  // ALWAYS serve the app on port 3000
-  // this serves both the API and the client.
-  const port = 3000;
+  // HTTP stays on 3000 for captive-portal detection (iptables REDIRECT :80).
+  const port = Number(process.env.PORT || 3000);
   server.listen({
     port,
     host: "0.0.0.0",
   }, () => {
     log(`serving on port ${port}`);
   });
+
+  const tls = getPortalTls();
+  if (tls.enabled && tls.credentials) {
+    const httpsServer = createHttpsServer(tls.credentials, app);
+    httpsServer.listen({
+      port: tls.port,
+      host: "0.0.0.0",
+    }, () => {
+      const trust = tls.trusted ? "trusted cert" : "self-signed";
+      log(`serving https on port ${tls.port} (${tls.host}, ${trust})`);
+    });
+  }
 })();

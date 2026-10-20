@@ -1,82 +1,43 @@
-import { useState, useEffect } from "react";
-import { web3Provider, type MockWallet } from "@/lib/web3-mock";
+import { useAccount, useChainId, useDisconnect, useSwitchChain } from "wagmi";
+import { useAppKit } from "@reown/appkit/react";
 
+// Drop-in replacement for the previous mock useWallet().
+// All consumers should keep working with the same shape — just wired to real wagmi now.
 export function useWallet() {
-  const [wallet, setWallet] = useState<MockWallet>(web3Provider.getWallet());
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const connectWallet = async () => {
-    try {
-      setIsConnecting(true);
-      setError(null);
-      
-      const address = await web3Provider.connectWallet();
-      setWallet(web3Provider.getWallet());
-      
-      return address;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to connect wallet";
-      setError(errorMessage);
-      throw err;
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  const disconnectWallet = async () => {
-    try {
-      await web3Provider.disconnectWallet();
-      setWallet(web3Provider.getWallet());
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to disconnect wallet";
-      setError(errorMessage);
-    }
-  };
-
-  const switchNetwork = async (chainId: number) => {
-    try {
-      setError(null);
-      await web3Provider.switchNetwork(chainId);
-      setWallet(web3Provider.getWallet());
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to switch network";
-      setError(errorMessage);
-      throw err;
-    }
-  };
-
-  const getCurrentNetwork = () => {
-    return web3Provider.getCurrentNetwork();
-  };
-
-  const getAvailableNetworks = () => {
-    return web3Provider.getNetworks();
-  };
-
-  // Update wallet state when provider changes
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const currentWallet = web3Provider.getWallet();
-      setWallet(prevWallet => {
-        if (JSON.stringify(prevWallet) !== JSON.stringify(currentWallet)) {
-          return currentWallet;
-        }
-        return prevWallet;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, []);
+  const { address, isConnected, isConnecting } = useAccount();
+  const chainId = useChainId();
+  const { disconnect } = useDisconnect();
+  const { switchChain } = useSwitchChain();
+  const { open } = useAppKit();
 
   return {
-    wallet,
+    wallet: {
+      address: address ?? null,
+      isConnected,
+      chainId: chainId ?? null,
+    },
     isConnecting,
-    error,
-    connectWallet,
-    disconnectWallet,
-    switchNetwork,
-    getCurrentNetwork,
-    getAvailableNetworks,
+    error: null as string | null,
+    connectWallet: async () => {
+      // Opens the AppKit modal — handles QR, deep links, browser extensions.
+      await open();
+      return address ?? null;
+    },
+    disconnectWallet: async () => {
+      disconnect();
+    },
+    switchNetwork: async (targetChainId: number) => {
+      switchChain({ chainId: targetChainId });
+    },
+    getCurrentNetwork: () => {
+      if (!chainId) return null;
+      if (chainId === 10) return { chainId: 10, name: "Optimism", gasPrice: "0.000005", confirmationTime: 3 };
+      if (chainId === 11155420) return { chainId: 11155420, name: "OP Sepolia", gasPrice: "0.000005", confirmationTime: 3 };
+      return { chainId, name: `Chain ${chainId}`, gasPrice: "?", confirmationTime: 3 };
+    },
+    getAvailableNetworks: () => [
+      { chainId: 10, name: "Optimism", gasPrice: "0.000005", confirmationTime: 3 },
+      { chainId: 11155420, name: "OP Sepolia", gasPrice: "0.000005", confirmationTime: 3 },
+    ],
   };
 }

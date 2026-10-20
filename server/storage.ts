@@ -43,6 +43,7 @@ export interface IStorage {
 
   // Access Session Management
   getAccessSession(sessionGuid: string): Promise<AccessSession | undefined>;
+  getAccessSessionByPaymentReference(paymentReference: string): Promise<AccessSession | undefined>;
   getAccessSessionsByUser(userIdentifier: string): Promise<AccessSession[]>;
   createAccessSession(session: InsertAccessSession): Promise<AccessSession>;
   updateAccessSession(sessionGuid: string, updates: Partial<AccessSession>): Promise<AccessSession | undefined>;
@@ -50,6 +51,14 @@ export interface IStorage {
   expireAccessSession(sessionGuid: string): Promise<void>;
 
   // Analytics
+  recordPortalEvent?(event: {
+    eventName: string;
+    clientIp: string;
+    visitId?: string;
+    tierId?: string;
+    paymentMethod?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void>;
   getAnalytics?(): Promise<any>;
 }
 

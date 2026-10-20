@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "farmers-market",
+  "name": "Port Saint Lucie Market at Tradition",
+  "description": "Free visitor Wi-Fi and a faster paid connection for vendors.",
+  "branding": {
+    "logoText": "Port Saint Lucie Market at Tradition",
+    "tagline": "Free Wi-Fi for visitors.",
+    "showCommunityBadge": false
+  },
+  "pricing": {
+    "currency": "MESH",
+    "fiatCurrency": "USD",
+    "tiers": [
+      {
+        "id": "market-free",
+        "name": "Visitor Wi-Fi",
+        "description": "Browse and message while you shop.",
+        "price": 0,
+        "fiatPrice": 0,
+        "dataLimitMB": 0,
+        "durationHours": 0,
+        "speedMbps": 10,
+        "features": [],
+        "buttonText": "Connect Free",
+        "buttonColor": "green",
+        "isFree": true,
+        "isPopular": false,
+        "enabled": true,
+        "acceptStripePayments": false,
+        "acceptCryptoPayments": false
+      },
+      {
+        "id": "market-vendor",
+        "name": "Vendor Wi-Fi",
+        "description": "Faster Wi-Fi for your stall.",
+        "price": 0,
+        "fiatPrice": 2,
+        "dataLimitMB": 0,
+        "durationHours": 0,
+        "speedMbps": 50,
+        "features": [],
+        "buttonText": "Pay $2",
+        "buttonColor": "blue",
+        "isFree": false,
+        "isPopular": false,
+        "enabled": true,
+        "acceptStripePayments": true,
+        "acceptCryptoPayments": false
+      }
+    ]
+  }
+}

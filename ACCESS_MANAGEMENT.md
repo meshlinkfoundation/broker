@@ -1,6 +1,6 @@
-# MeshLink Access Management System
+# meshlink Access Management System
 
-This document explains how the MeshLink access management system works and how to integrate it with your internet gateway services.
+This document explains how the meshlink access management system works and how to integrate it with your internet gateway services.
 
 ## Overview
 
@@ -227,7 +227,7 @@ fi
 
 ### Node Operator Setup
 1. Configure pricing tiers in `meshlink-config.json`
-2. Set up Stripe Payment Links or crypto wallet
+2. Set up Stripe Payment Links. MESH wallet setup lives in the meshlink-onchain repo
 3. Deploy gateway integration script
 4. Monitor access sessions through API
 

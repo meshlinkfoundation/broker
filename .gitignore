@@ -35,3 +35,6 @@ build/
 coverage/
 .nyc_output/
 .cache/
+
+# Runtime-selected operator profile
+server/config/active-profile.json

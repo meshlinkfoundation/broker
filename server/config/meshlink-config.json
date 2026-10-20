@@ -1,6 +1,8 @@
 {
+  "mode": "sandbox",
+  "_modeNote": "Set mode to 'sandbox' for testnet (OP Sepolia) or 'production' for live (Optimism mainnet).",
   "nodeInfo": {
-    "name": "MeshLink_Free",
+    "name": "meshlink",
     "location": "Downtown WiFi Hub",
     "operator": "Community Node #42"
   },
@@ -11,24 +13,22 @@
       {
         "id": "free",
         "name": "Free Access",
-        "description": "Basic internet for browsing and messaging - Always free!",
+        "description": "Basic internet for browsing and messaging",
         "price": 0,
         "fiatPrice": 0,
         "dataLimitMB": 500,
         "durationHours": 24,
-        "speedMbps": 5,
+        "speedMbps": 1,
         "features": [
           "500MB daily limit",
           "1 Mbps speed",
-          "Web browsing & messaging",
-          "Community support"
+          "Web browsing & messaging"
         ],
         "buttonText": "Connect Free",
         "buttonColor": "green",
         "isFree": true,
         "isPopular": false,
         "enabled": true,
-        "acceptStripePayments": false,
         "acceptCryptoPayments": false
       },
       {
@@ -36,94 +36,98 @@
         "name": "Lightweight",
         "description": "Moderate speed for social media and casual browsing",
         "price": 15,
-        "fiatPrice": 5.99,
+        "ethPrice": "0.004",
         "dataLimitMB": 2048,
         "durationHours": 168,
         "speedMbps": 25,
         "features": [
           "2GB weekly limit",
           "25 Mbps speed",
-          "Social media & browsing",
-          "Email support"
+          "Social media & browsing"
         ],
-        "buttonText": "Pay $5.99",
+        "buttonText": "Pay 15 MESH",
         "buttonColor": "blue",
         "isFree": false,
         "isPopular": true,
         "enabled": true,
-        "acceptStripePayments": true,
-        "acceptCryptoPayments": false
+        "acceptCryptoPayments": true
       },
       {
         "id": "premium",
-        "name": "Super Fast Premium",
-        "description": "Ultra-high speed for streaming, gaming, and heavy downloads",
-        "price": 75,
-        "fiatPrice": 9.99,
+        "name": "Premium",
+        "description": "Full speed for streaming, gaming, and heavy use",
+        "price": 30,
+        "ethPrice": "0.008",
         "dataLimitMB": 10240,
         "durationHours": 168,
         "speedMbps": 200,
         "features": [
           "10GB weekly limit",
           "Full speed (up to 200 Mbps)",
-          "4K streaming & gaming",
-          "Priority support"
+          "4K streaming & gaming"
         ],
-        "buttonText": "Pay $9.99",
+        "buttonText": "Pay 30 MESH",
         "buttonColor": "purple",
         "isFree": false,
         "isPopular": false,
         "enabled": true,
-        "acceptStripePayments": true,
-        "acceptCryptoPayments": false
+        "acceptCryptoPayments": true
       }
     ]
-  },
-  "network": {
-    "contractAddress": "",
-    "chainId": 10,
-    "chainName": "Optimism",
-    "rpcUrl": "https://mainnet.optimism.io"
   },
   "branding": {
     "primaryColor": "#2563eb",
     "secondaryColor": "#16a34a",
-    "logoText": "MeshLink",
+    "logoText": "meshlink",
     "tagline": "Free Internet for Everyone",
     "showCommunityBadge": true
   },
   "features": {
-    "enableCrypto": false,
-    "enableWalletConnection": false,
+    "enableCrypto": true,
+    "enableWalletConnection": true,
     "requireWalletForPremium": false,
-    "showTransactionDetails": true,
+    "showTransactionDetails": false,
     "redirectAfterPayment": "https://www.google.com"
   },
   "stripe": {
-    "enabled": true,
-    "expressCheckout": true,
-    "currency": "usd"
+    "enabled": false,
+    "_note": "Stripe is disabled by default. meshlink is a sovereign payment network \u2014 no middlemen. Enable only for commercial/mainstream deployments that require card payments."
   },
   "payments": {
     "stripe": {
-      "enabled": true,
-      "paymentMethods": [
-        "card",
-        "apple_pay",
-        "google_pay",
-        "link"
-      ],
-      "currency": "usd"
+      "enabled": false
     },
     "crypto": {
-      "enabled": false,
-      "network": {
-        "chainId": 10,
-        "chainName": "Optimism",
-        "rpcUrl": "https://mainnet.optimism.io",
-        "contractAddress": "",
-        "tokenSymbol": "MESH",
-        "tokenDecimals": 18
+      "enabled": true,
+      "walletConnectProjectId": "",
+      "_note": "Active network resolved from networks[mode].",
+      "networks": {
+        "sandbox": {
+          "chainId": 11155420,
+          "chainName": "OP Sepolia",
+          "rpcUrl": "https://sepolia.optimism.io",
+          "tokenAddress": "",
+          "paymentContractAddress": "",
+          "tokenSymbol": "MESH",
+          "tokenDecimals": 18,
+          "explorerUrl": "https://sepolia-optimism.etherscan.io",
+          "operatorWallet": "",
+          "uniswapPoolAddress": "",
+          "_uniswapNote": "MESH/WETH pool address on OP Sepolia. Leave blank until pool is created."
+        },
+        "production": {
+          "chainId": 10,
+          "chainName": "Optimism",
+          "rpcUrl": "https://mainnet.optimism.io",
+          "tokenAddress": "",
+          "paymentContractAddress": "",
+          "tokenSymbol": "MESH",
+          "tokenDecimals": 18,
+          "explorerUrl": "https://optimistic.etherscan.io",
+          "operatorWallet": "",
+          "uniswapPoolAddress": "",
+          "_note": "Fill in after mainnet deploy."
+        }
       }
     }
   },

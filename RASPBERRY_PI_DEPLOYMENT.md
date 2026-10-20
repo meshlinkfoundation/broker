@@ -1,6 +1,6 @@
-# MeshLink Raspberry Pi 5 Deployment Guide
+# meshlink Raspberry Pi 5 Deployment Guide
 
-Complete guide for deploying MeshLink hotspot management on Raspberry Pi 5 with OpenWRT or Raspberry Pi OS.
+Complete guide for deploying meshlink hotspot management on Raspberry Pi 5 with OpenWRT or Raspberry Pi OS.
 
 ## Hardware Requirements
 
@@ -69,12 +69,12 @@ config wifi-iface 'hotspot'
     option device 'radio0'
     option network 'hotspot'
     option mode 'ap'
-    option ssid 'MeshLink_Free'
+    option ssid 'meshlink_Free'
     option encryption 'none'
     option isolate '1'
 ```
 
-### 4. Deploy MeshLink Application
+### 4. Deploy meshlink Application
 
 ```bash
 # Create application directory
@@ -149,21 +149,21 @@ config zone
     option network 'hotspot'
 
 config rule
-    option name 'Allow-MeshLink-HTTP'
+    option name 'Allow-meshlink-HTTP'
     option src 'hotspot'
     option dest_port '80 443 3000'
     option target 'ACCEPT'
     option proto 'tcp'
 
 config rule
-    option name 'Allow-MeshLink-DNS'
+    option name 'Allow-meshlink-DNS'
     option src 'hotspot'
     option dest_port '53'
     option target 'ACCEPT'
     option proto 'udp'
 
 config rule
-    option name 'Allow-MeshLink-DHCP'
+    option name 'Allow-meshlink-DHCP'
     option src 'hotspot'
     option dest_port '67'
     option target 'ACCEPT'
@@ -232,7 +232,7 @@ ssh meshlink@<pi-ip-address>
 sudo apt update -y && sudo apt upgrade -y
 ```
 
-### 3. Run the MeshLink Installer
+### 3. Run the meshlink Installer
 
 The `meshlink-wifi-gateway/install.sh` script handles **everything** end-to-end:
 - System packages (hostapd, dnsmasq, iptables, iw, rfkill)
@@ -258,7 +258,7 @@ Default AP settings (edit variables at top of `install.sh` to customize):
 
 | Setting | Default |
 |---------|---------|
-| SSID | `MeshLink` |
+| SSID | `meshlink` |
 | Password | `meshlink2025` |
 | Gateway IP | `192.168.50.1` |
 | DHCP range | `192.168.50.10` - `192.168.50.100` |
@@ -287,9 +287,9 @@ sudo iptables -t nat -L PREROUTING -n
 
 ### 5. Test the Captive Portal
 
-1. Connect a phone/laptop to the **MeshLink** WiFi (password: `meshlink2025`)
+1. Connect a phone/laptop to the **meshlink** WiFi (password: `meshlink2025`)
 2. The device should show a "Sign in to WiFi" notification or popup
-3. Tapping it opens the MeshLink landing page
+3. Tapping it opens the meshlink landing page
 4. If it doesn't appear, **forget the network and reconnect**
 
 #### Key differences from older Raspberry Pi OS (Bookworm and earlier)
@@ -303,14 +303,14 @@ sudo iptables -t nat -L PREROUTING -n
 
 ## Configuration Management
 
-### 1. Update MeshLink Configuration
+### 1. Update meshlink Configuration
 
 Edit `server/config/meshlink-config.json`:
 
 ```json
 {
   "nodeInfo": {
-    "name": "MeshLink_MyNode",
+    "name": "meshlink_MyNode",
     "location": "Your Location",
     "operator": "Your Name"
   },
@@ -355,7 +355,7 @@ If you want to accept payments:
 
 ### 3. Database Management
 
-MeshLink uses SQLite by default. Database file location:
+meshlink uses SQLite by default. Database file location:
 - OpenWRT: `/opt/meshlink/data/meshlink.db`
 - Raspberry Pi OS: `/home/pi/meshlink/meshlink.db`
 
@@ -366,7 +366,7 @@ Default password: `admin` (change in config)
 
 ### Traffic Shaping
 
-MeshLink automatically configures:
+meshlink automatically configures:
 - **tc (traffic control)** for bandwidth limiting
 - **iptables** for client isolation and firewall rules
 - **ipset** for efficient client management
@@ -390,7 +390,7 @@ Each connected client is isolated from others for security:
 ### View Logs
 
 ```bash
-# MeshLink application logs
+# meshlink application logs
 journalctl -u meshlink -f
 
 # System logs
@@ -425,10 +425,10 @@ sudo systemctl restart meshlink
 
 ## Security Considerations
 
-1. **Change default passwords** in MeshLink config
+1. **Change default passwords** in meshlink config
 2. **Enable firewall rules** to protect management interface
 3. **Use HTTPS** in production with SSL certificates
-4. **Regular updates** of system and MeshLink software
+4. **Regular updates** of system and meshlink software
 5. **Monitor access logs** for unusual activity
 
 ## Troubleshooting
@@ -447,7 +447,7 @@ sudo systemctl status dnsmasq
 sudo systemctl restart dnsmasq
 ```
 
-**MeshLink not accessible:**
+**meshlink not accessible:**
 ```bash
 sudo systemctl status meshlink
 curl http://localhost:3000/api/health

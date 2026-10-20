@@ -1,11 +1,23 @@
 import type { Express } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { networkManager } from "./network-manager";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import Stripe from "stripe";
+import { createChainClient, type ActiveNetwork, type Address, type Hex } from "./chain-client";
+import { startPaymentListener, type PaymentEvent } from "./payment-listener";
+import type { PublicClient } from "viem";
+import { getPortalTls, portalPublicConfig } from "./portal-tls";
+import { getExtenderStatus } from "./extenders";
+import {
+  activateServiceProfile,
+  listServiceProfiles,
+  resolveServiceProfile,
+} from "./service-profiles";
 
 const createSessionSchema = z.object({
   walletAddress: z.string().min(1),
@@ -13,14 +25,47 @@ const createSessionSchema = z.object({
   networkId: z.number().int().positive(),
 });
 
+const portalEventSchema = z.object({
+  eventName: z.enum([
+    "portal_viewed",
+    "tier_selected",
+    "checkout_cancelled",
+    "checkout_failed",
+  ]),
+  visitId: z.string().max(128).optional(),
+  tierId: z.string().max(128).optional(),
+  paymentMethod: z.enum(["free", "stripe", "crypto", "unavailable"]).optional(),
+});
+
+async function recordPortalEvent(
+  eventName: string,
+  clientIp: string,
+  details: {
+    visitId?: string;
+    tierId?: string;
+    paymentMethod?: string;
+    metadata?: Record<string, unknown>;
+  } = {},
+) {
+  if (!storage.recordPortalEvent) return;
+  try {
+    await storage.recordPortalEvent({ eventName, clientIp, ...details });
+  } catch (error) {
+    // Analytics must never prevent a client from purchasing or receiving access.
+    console.error(`[Analytics] failed to record ${eventName}:`, error);
+  }
+}
+
 // Load configuration
 let config: any = null;
+let baseConfig: any = null;
 
 function loadConfig() {
   try {
     const configPath = path.join(process.cwd(), "server", "config", "meshlink-config.json");
     const configData = fs.readFileSync(configPath, "utf8");
-    config = JSON.parse(configData);
+    baseConfig = JSON.parse(configData);
+    config = resolveServiceProfile(baseConfig);
   } catch (error) {
     console.error("Config loading error:", error);
   }
@@ -28,7 +73,230 @@ function loadConfig() {
 
 loadConfig();
 
+// Resolve the active crypto network for the current mode (sandbox|production).
+// All on-chain reads, event listeners, and client UI should use what this returns.
+function getActiveCryptoNetwork(): any {
+  if (!config) return null;
+  const mode = config.mode === "production" ? "production" : "sandbox";
+  const networks = config.payments?.crypto?.networks;
+  if (!networks) return null;
+  return networks[mode] ?? null;
+}
+
+// Sanity-check Stripe key matches the configured mode. Logs a warning but does not block boot.
+function validateStripeKeyMatchesMode() {
+  if (!config) return;
+  const mode = config.mode === "production" ? "production" : "sandbox";
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return; // Stripe just disabled; not an error here.
+  const isTestKey = key.startsWith("sk_test_");
+  const isLiveKey = key.startsWith("sk_live_");
+  if (mode === "sandbox" && isLiveKey) {
+    console.warn("[Config] Mode is 'sandbox' but STRIPE_SECRET_KEY is a live key (sk_live_*). Real charges will occur.");
+  }
+  if (mode === "production" && isTestKey) {
+    console.warn("[Config] Mode is 'production' but STRIPE_SECRET_KEY is a test key (sk_test_*). Payments will not be real.");
+  }
+}
+
+validateStripeKeyMatchesMode();
+
+const UNLIMITED_ACCESS_EXPIRY = new Date("2099-01-01T00:00:00.000Z");
+
+function accessWindowForTier(tier: { durationHours?: number }, start = new Date()) {
+  const hours = Number(tier.durationHours);
+  if (!Number.isFinite(hours) || hours <= 0) {
+    return { durationSeconds: 0, expiryDate: UNLIMITED_ACCESS_EXPIRY };
+  }
+  const durationSeconds = Math.ceil(hours * 60 * 60);
+  return {
+    durationSeconds,
+    expiryDate: new Date(start.getTime() + durationSeconds * 1000),
+  };
+}
+
+// Pending crypto payment sessions. Keyed by sessionId, holds what the broker is waiting for.
+// In-memory for now — survives until process restart. Phase 2.5: move to SQLite if needed.
+interface PendingCryptoSession {
+  sessionId: Hex;
+  clientIp: string;
+  tierId: string;
+  expectedAmount: bigint;          // minimum MESH (in wei) the operator must receive
+  expectedOperator: Address;       // operator wallet that must receive payment
+  expiresAt: number;               // Date.now() ms — session unusable after this
+  status: "pending" | "granted" | "expired";
+  createdAt: number;
+}
+const pendingCryptoSessions = new Map<string, PendingCryptoSession>();
+
+function signAdminToken(): string {
+  const payload = Buffer.from(JSON.stringify({ v: 1 })).toString("base64url");
+  const signature = crypto.createHmac("sha256", String(config?.admin?.password || "")).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function adminTokenValid(token: string): boolean {
+  const secret = String(config?.admin?.password || "");
+  const [payload, signature] = token.split(".");
+  if (!secret || !payload || !signature) return false;
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) return false;
+  return crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const authorization = req.headers.authorization || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+
+  if (!adminTokenValid(token)) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  next();
+}
+
+// Sweep expired sessions every 60s so the map doesn't grow forever.
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of pendingCryptoSessions) {
+    if (session.status === "pending" && session.expiresAt < now) {
+      session.status = "expired";
+    }
+    // Drop anything older than 1 hour regardless of status
+    if (now - session.createdAt > 60 * 60 * 1000) {
+      pendingCryptoSessions.delete(id);
+    }
+  }
+}, 60 * 1000);
+
+// Generate a 32-byte random session ID. Cryptographically secure.
+function generateSessionId(): Hex {
+  return `0x${crypto.randomBytes(32).toString("hex")}` as Hex;
+}
+
+// Compute the expected MESH amount (in wei) for a given tier from the config.
+function tierMeshAmountWei(tier: any, network: ActiveNetwork): bigint {
+  const meshPrice = typeof tier.price === "number" ? tier.price : 0;
+  return BigInt(meshPrice) * 10n ** BigInt(network.tokenDecimals);
+}
+
+// Start (or restart) the on-chain payment listener using the active network.
+let stopListener: (() => void) | null = null;
+let chainClient: PublicClient | null = null;
+
+async function startCryptoListener() {
+  if (stopListener) {
+    stopListener();
+    stopListener = null;
+  }
+  const network = getActiveCryptoNetwork();
+  if (!network || !config?.payments?.crypto?.enabled) {
+    console.log("[PaymentListener] crypto disabled or no active network — listener not started");
+    return;
+  }
+  if (!network.paymentContractAddress || network.paymentContractAddress === "") {
+    console.warn("[PaymentListener] paymentContractAddress is empty — listener not started");
+    return;
+  }
+
+  chainClient = createChainClient(network);
+
+  stopListener = startPaymentListener(chainClient, network, async (event: PaymentEvent) => {
+    const session = pendingCryptoSessions.get(event.sessionId);
+    if (!session) {
+      console.log(`[Payment] received PaymentReceived for unknown sessionId ${event.sessionId} — ignoring`);
+      return;
+    }
+    if (session.status !== "pending") {
+      console.log(`[Payment] sessionId ${event.sessionId} already ${session.status} — ignoring replay`);
+      return;
+    }
+    if (event.operator.toLowerCase() !== session.expectedOperator.toLowerCase()) {
+      console.warn(`[Payment] sessionId ${event.sessionId} paid to wrong operator (got ${event.operator}, expected ${session.expectedOperator})`);
+      return;
+    }
+    if (event.amount < session.expectedAmount) {
+      console.warn(`[Payment] sessionId ${event.sessionId} underpaid (got ${event.amount}, expected ${session.expectedAmount})`);
+      return;
+    }
+
+    const tier = config.pricing.tiers.find((t: any) => t.id === session.tierId);
+    if (!tier) {
+      console.error(`[Payment] tier ${session.tierId} not found in config`);
+      return;
+    }
+
+    const { durationSeconds } = accessWindowForTier(tier);
+    const speedMbps = parseFloat(tier.speedMbps) || undefined;
+    await networkManager.grantAccess(session.clientIp, durationSeconds, speedMbps);
+    await recordPortalEvent("payment_succeeded", session.clientIp, {
+      tierId: tier.id,
+      paymentMethod: "crypto",
+      metadata: { transactionHash: event.txHash },
+    });
+    await recordPortalEvent("access_granted", session.clientIp, {
+      tierId: tier.id,
+      paymentMethod: "crypto",
+    });
+
+    session.status = "granted";
+    console.log(`[Payment] sessionId ${event.sessionId} confirmed — ${session.clientIp} granted ${tier.name} for ${tier.durationHours}h (tx ${event.txHash})`);
+  });
+}
+
+startCryptoListener();
+
 export async function registerRoutes(app: Express): Promise<Server> {
+
+  // Login is public on trusted management interfaces; every other admin API
+  // requires a server-issued, unexpired bearer token.
+  app.use("/api/admin", (req, res, next) => {
+    if (req.method === "POST" && req.path === "/login") return next();
+    return requireAdmin(req, res, next);
+  });
+
+  // First-party funnel analytics. The server supplies the IP; clients cannot
+  // attribute activity to another device. Duplicate daily events are ignored.
+  app.post("/api/analytics/event", async (req, res) => {
+    const parsed = portalEventSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid analytics event" });
+    }
+    await recordPortalEvent(
+      parsed.data.eventName,
+      networkManager.getClientIp(req),
+      parsed.data,
+    );
+    return res.status(204).end();
+  });
+
+  app.get("/api/admin/profiles", (_req, res) => {
+    try {
+      if (!baseConfig) loadConfig();
+      res.json(listServiceProfiles(baseConfig));
+    } catch (error) {
+      console.error("Profile listing error:", error);
+      res.status(500).json({ error: "Failed to list service profiles" });
+    }
+  });
+
+  app.post("/api/admin/profiles/:profileId/activate", (req, res) => {
+    try {
+      if (!baseConfig) loadConfig();
+      const result = activateServiceProfile(req.params.profileId, baseConfig);
+      loadConfig();
+      res.json({
+        success: true,
+        activeProfile: config.serviceProfile,
+        ...result,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to activate service profile";
+      res.status(message.startsWith("Unknown service profile") ? 404 : 500).json({ error: message });
+    }
+  });
 
   // Get node configuration
   app.get("/api/config", async (req, res) => {
@@ -47,26 +315,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
         },
       };
 
+      const activeNetwork = getActiveCryptoNetwork();
+      const mode = config.mode === "production" ? "production" : "sandbox";
+      const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
+      const stripeEnabled = Boolean(
+        stripeConfigured &&
+        (config.payments?.stripe?.enabled ?? config.stripe?.enabled ?? false),
+      );
+
+      const clientIp = networkManager.getClientIp(req);
+      if (clientIp.startsWith("192.168.50.")) {
+        await recordPortalEvent("portal_viewed", clientIp);
+      }
+
       const publicConfig = {
         ...filteredConfig,
+        mode,
+        portal: portalPublicConfig(),
         stripe: {
-          enabled: config.stripe?.enabled || false,
+          enabled: stripeEnabled,
           expressCheckout: config.stripe?.expressCheckout || false,
           currency: config.stripe?.currency || "usd"
         },
-        payments: config.payments || {
+        payments: {
           stripe: {
-            enabled: config.stripe?.enabled || false,
-            paymentMethods: ["card"],
-            currency: config.stripe?.currency || "usd"
+            enabled: stripeEnabled,
+            paymentMethods: config.payments?.stripe?.paymentMethods || ["card"],
+            currency: config.payments?.stripe?.currency || config.stripe?.currency || "usd"
           },
           crypto: {
-            enabled: config.features?.enableCrypto || false,
-            network: config.network || {
-              chainId: 10,
-              chainName: "Optimism",
-              rpcUrl: "https://mainnet.optimism.io",
-              contractAddress: "0x0000000000000000000000000000000000000000",
+            enabled: config.payments?.crypto?.enabled ?? (config.features?.enableCrypto || false),
+            walletConnectProjectId: config.payments?.crypto?.walletConnectProjectId || "",
+            // Resolved active network for the current mode — frontend doesn't need to know about modes.
+            network: activeNetwork || {
+              chainId: 11155420,
+              chainName: "OP Sepolia",
+              rpcUrl: "https://sepolia.optimism.io",
+              tokenAddress: "0x0000000000000000000000000000000000000000",
+              paymentContractAddress: "0x0000000000000000000000000000000000000000",
               tokenSymbol: "MESH",
               tokenDecimals: 18
             }
@@ -81,21 +367,171 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // RFC 8908 Captive Portal API. DHCP option 114 points here only when the
+  // portal has a publicly trusted certificate.
+  app.get("/api/captive-portal", async (req, res) => {
+    try {
+      const tls = getPortalTls();
+      const clientIp = networkManager.getClientIp(req);
+      const captive = !(await networkManager.hasAccess(clientIp));
+
+      res.setHeader("Content-Type", "application/captive+json");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({
+        captive,
+        ...(captive ? { "user-portal-url": `${tls.url}/` } : {}),
+      });
+    } catch (error) {
+      console.error("Captive portal API error:", error);
+      res.status(500).json({ error: "Failed to determine captive state" });
+    }
+  });
+
+  // Create a crypto payment session.
+  // Client picks a tier in the captive portal; broker generates a sessionId
+  // for them to pass to MeshPayment.pay(...). Broker watches for the matching event.
+  app.post("/api/payment/crypto/create-session", async (req, res) => {
+    try {
+      const { tierId } = req.body;
+      if (!config || !tierId) {
+        return res.status(400).json({ error: "Missing tierId" });
+      }
+      const tier = config.pricing.tiers.find((t: any) => t.id === tierId);
+      if (!tier || tier.enabled === false) {
+        return res.status(400).json({ error: "Invalid tier" });
+      }
+      if (tier.isFree) {
+        return res.status(400).json({ error: "Free tier does not require crypto payment" });
+      }
+      if (!tier.acceptCryptoPayments) {
+        return res.status(400).json({ error: "This tier does not accept crypto" });
+      }
+
+      const network = getActiveCryptoNetwork();
+      if (!network || !config.payments?.crypto?.enabled) {
+        return res.status(503).json({ error: "Crypto payments are disabled at this node" });
+      }
+      if (!network.operatorWallet || network.operatorWallet === "0x0000000000000000000000000000000000000000" || network.operatorWallet === "") {
+        return res.status(503).json({ error: "Operator wallet is not configured" });
+      }
+
+      const sessionId = generateSessionId();
+      const clientIp = networkManager.getClientIp(req);
+      const expectedAmount = tierMeshAmountWei(tier, network);
+      const expiresAt = Date.now() + 10 * 60 * 1000; // 10 min to complete payment
+
+      pendingCryptoSessions.set(sessionId, {
+        sessionId,
+        clientIp,
+        tierId: tier.id,
+        expectedAmount,
+        expectedOperator: network.operatorWallet as Address,
+        expiresAt,
+        status: "pending",
+        createdAt: Date.now(),
+      });
+
+      await recordPortalEvent("checkout_started", clientIp, {
+        tierId: tier.id,
+        paymentMethod: "crypto",
+      });
+
+      console.log(`[Payment] created crypto session ${sessionId} for ${clientIp} → tier ${tier.id} (${expectedAmount} wei)`);
+
+      res.json({
+        sessionId,
+        expiresAt,
+        paymentContractAddress: network.paymentContractAddress,
+        tokenAddress: network.tokenAddress,
+        operatorWallet: network.operatorWallet,
+        amount: expectedAmount.toString(),
+        chainId: network.chainId,
+        chainName: network.chainName,
+        explorerUrl: network.explorerUrl,
+      });
+    } catch (error: any) {
+      console.error("Create crypto session error:", error);
+      res.status(500).json({ error: "Failed to create session: " + error.message });
+    }
+  });
+
+  // Poll endpoint — client can check whether their payment has been confirmed.
+  app.get("/api/payment/crypto/session/:sessionId", (req, res) => {
+    const session = pendingCryptoSessions.get(req.params.sessionId);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found or already cleaned up" });
+    }
+    res.json({
+      sessionId: session.sessionId,
+      status: session.status,
+      tierId: session.tierId,
+      expiresAt: session.expiresAt,
+    });
+  });
+
+  // Trust / transparency endpoint — surfaces on-chain facts the captive portal can display.
+  app.get("/api/chain/info", async (req, res) => {
+    try {
+      const network = getActiveCryptoNetwork();
+      if (!network) {
+        return res.status(503).json({ error: "Crypto not configured" });
+      }
+      res.json({
+        chainId: network.chainId,
+        chainName: network.chainName,
+        explorerUrl: network.explorerUrl,
+        tokenAddress: network.tokenAddress,
+        paymentContractAddress: network.paymentContractAddress,
+        operatorWallet: network.operatorWallet,
+        // Static trust signals — these are guaranteed by the contract code itself.
+        guarantees: {
+          contractOpenSource: true,
+          contractVerifiedOnExplorer: true,
+          protocolFeePercent: 0,
+          operatorReceivesPercent: 100,
+          tokenIsImmutable: true,
+          tokenHasOwner: false,
+          tokenSupplyIsFixed: true,
+        },
+      });
+    } catch (error: any) {
+      console.error("Chain info error:", error);
+      res.status(500).json({ error: "Failed to fetch chain info" });
+    }
+  });
+
   // Health check
   app.get("/api/health", (req, res) => {
+    const mode = config?.mode === "production" ? "production" : "sandbox";
+    const activeNetwork = getActiveCryptoNetwork();
+    const stripeConfigured = Boolean(process.env.STRIPE_SECRET_KEY);
+    const stripeEnabled = Boolean(
+      stripeConfigured &&
+      (config?.payments?.stripe?.enabled ?? config?.stripe?.enabled ?? false),
+    );
     res.json({
       status: "ok",
       timestamp: new Date().toISOString(),
-      stripe: config?.stripe?.enabled || false
+      mode,
+      portal: portalPublicConfig(),
+      stripe: stripeEnabled,
+      stripeConfigured,
+      crypto: {
+        enabled: config?.payments?.crypto?.enabled || false,
+        chainId: activeNetwork?.chainId,
+        chainName: activeNetwork?.chainName,
+        tokenAddress: activeNetwork?.tokenAddress,
+        paymentContractAddress: activeNetwork?.paymentContractAddress,
+      },
     });
   });
 
   // Create Stripe Checkout Session for paid tiers
   app.post("/api/payment/create-checkout", async (req, res) => {
     try {
-      const { tierId } = req.body;
+      const { tierId, userIdentifier } = req.body;
 
-      if (!config || !tierId) {
+      if (!config || !tierId || typeof userIdentifier !== "string" || !userIdentifier.trim()) {
         return res.status(400).json({ error: "Missing required parameters" });
       }
 
@@ -104,9 +540,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid tier for Stripe checkout" });
       }
 
+      const fiatPrice = Number(tier.fiatPrice);
+      if (!Number.isFinite(fiatPrice) || fiatPrice <= 0) {
+        return res.status(400).json({ error: "This tier does not have a valid card price" });
+      }
+
       const stripeKey = process.env.STRIPE_SECRET_KEY;
       if (!stripeKey) {
-        return res.status(500).json({ error: "Stripe is not configured" });
+        return res.status(503).json({ error: "Card payments are not available on this node" });
       }
 
       const stripe = new Stripe(stripeKey);
@@ -115,24 +556,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Grant temporary access (10 min) so client can reach Stripe
       await networkManager.grantAccess(clientIp, 600);
 
-      const host = req.headers.host || `192.168.50.1:${config.broker?.port || 3000}`;
-      const baseUrl = `http://${host}`;
+      const tls = getPortalTls();
+      const baseUrl = tls.enabled && tls.trusted
+        ? tls.url
+        : `http://${process.env.MESHLINK_AP_IP || "192.168.50.1"}:${config.broker?.port || 3000}`;
 
+      const currency = String(config.payments?.stripe?.currency || config.stripe?.currency || "usd").toLowerCase();
       const session = await stripe.checkout.sessions.create({
+        client_reference_id: userIdentifier,
+        metadata: {
+          tierId: tier.id,
+          userIdentifier,
+        },
         line_items: [{
           price_data: {
-            currency: config.payments?.stripe?.currency || config.stripe?.currency || 'usd',
+            currency,
             product_data: {
-              name: `${tier.name} - MeshLink WiFi`,
+              name: `${tier.name} - ${config.branding?.logoText || config.nodeInfo?.name || "Wi-Fi Access"}`,
               description: tier.description,
             },
-            unit_amount: Math.round(tier.fiatPrice * 100),
+            unit_amount: Math.round(fiatPrice * 100),
           },
           quantity: 1,
         }],
         mode: 'payment',
         success_url: `${baseUrl}/?payment_success=true&tier_id=${tierId}&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${baseUrl}/?payment_cancelled=true`,
+      });
+
+      await recordPortalEvent("checkout_started", clientIp, {
+        tierId: tier.id,
+        paymentMethod: "stripe",
       });
 
       console.log(`[Routes] Stripe checkout session ${session.id} created for tier ${tierId} (client ${clientIp})`);
@@ -175,13 +629,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(402).json({ error: "Payment not completed" });
         }
 
+        const expectedAmount = Math.round(Number(tier.fiatPrice) * 100);
+        const expectedCurrency = String(config.payments?.stripe?.currency || config.stripe?.currency || "usd").toLowerCase();
+        if (
+          session.metadata?.tierId !== tier.id ||
+          session.client_reference_id !== userIdentifier ||
+          session.amount_total !== expectedAmount ||
+          session.currency !== expectedCurrency
+        ) {
+          return res.status(400).json({ error: "Stripe payment does not match this access request" });
+        }
+
         console.log(`[Routes] Stripe session ${stripeSessionId} verified - payment_status: ${session.payment_status}`);
+        await recordPortalEvent("payment_succeeded", networkManager.getClientIp(req), {
+          tierId: tier.id,
+          paymentMethod: "stripe",
+          metadata: { stripeSessionId },
+        });
+      }
+
+      const resolvedPaymentReference = paymentMethod === "stripe" && stripeSessionId
+        ? `stripe_${stripeSessionId}`
+        : (paymentReference || `payment_${Date.now()}`);
+      if (paymentMethod === "stripe") {
+        const existingSession = await storage.getAccessSessionByPaymentReference(resolvedPaymentReference);
+        if (existingSession) {
+          if (existingSession.expiryDate.getTime() <= Date.now()) {
+            return res.status(409).json({ error: "This paid access session has expired" });
+          }
+          const clientIp = networkManager.getClientIp(req);
+          const remainingSeconds = Math.max(1, Math.floor((existingSession.expiryDate.getTime() - Date.now()) / 1000));
+          await networkManager.grantAccess(clientIp, remainingSeconds, parseFloat(existingSession.speedMbps) || undefined);
+          await recordPortalEvent("access_granted", clientIp, {
+            tierId: tier.id,
+            paymentMethod: "stripe",
+          });
+          return res.json({
+            success: true,
+            sessionGuid: existingSession.sessionGuid,
+            expiryDate: existingSession.expiryDate,
+            tierName: existingSession.tierName,
+            dataLimitMB: existingSession.dataLimitMB,
+            speedMbps: existingSession.speedMbps,
+          });
+        }
       }
 
       const sessionGuid = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const startDate = new Date();
-      const durationSeconds = tier.durationHours * 60 * 60;
-      const expiryDate = new Date(startDate.getTime() + durationSeconds * 1000);
+      const { durationSeconds, expiryDate } = accessWindowForTier(tier, startDate);
       const clientIp = networkManager.getClientIp(req);
 
       // Create access session with clientIp in SQLite
@@ -192,12 +688,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         tierId: tier.id,
         tierName: tier.name,
         paymentMethod: paymentMethod || 'stripe',
-        paymentReference: paymentReference || `payment_${Date.now()}`,
+        paymentReference: resolvedPaymentReference,
         startDate,
         expiryDate,
         dataLimitMB: tier.dataLimitMB,
         dataUsedMB: 0,
         speedMbps: tier.speedMbps.toString(),
+        price: paymentMethod === "stripe" ? Number(tier.fiatPrice || 0) : Number(tier.price || 0),
         status: 'active',
         nodeOperator: config.nodeInfo.operator,
         lastAccessAt: null,
@@ -206,8 +703,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Grant access via ipset with kernel-managed timeout + bandwidth shaping
       const speedMbps = parseFloat(tier.speedMbps) || undefined;
       await networkManager.grantAccess(clientIp, durationSeconds, speedMbps);
+      await recordPortalEvent("access_granted", clientIp, {
+        tierId: tier.id,
+        paymentMethod: paymentMethod || "stripe",
+      });
 
-      console.log(`[Routes] Client ${clientIp} granted ${tier.name} access for ${tier.durationHours}h (${speedMbps ?? 'no'} Mbps cap)`);
+      const accessLength = durationSeconds > 0 ? `${tier.durationHours}h` : "unlimited";
+      console.log(`[Routes] Client ${clientIp} granted ${tier.name} access for ${accessLength} (${speedMbps ?? 'no'} Mbps cap)`);
 
       res.json({
         success: true,
@@ -220,6 +722,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Payment completion error:", error);
       res.status(500).json({ error: "Failed to complete payment: " + error.message });
+    }
+  });
+
+  // A returning device may receive a different DHCP address after the hotspot
+  // restarts. Rebind an unexpired session using its opaque browser identifier.
+  app.post("/api/access/restore", async (req, res) => {
+    try {
+      const userIdentifier = typeof req.body?.userIdentifier === "string"
+        ? req.body.userIdentifier.trim()
+        : "";
+      if (!userIdentifier || userIdentifier.length > 256) {
+        return res.status(400).json({ error: "Invalid device identifier" });
+      }
+
+      const now = Date.now();
+      const sessions = await storage.getAccessSessionsByUser(userIdentifier);
+      const session = sessions.find((candidate) => (
+        candidate.status === "active" && new Date(candidate.expiryDate).getTime() > now
+      ));
+      if (!session) return res.json({ restored: false });
+
+      const clientIp = networkManager.getClientIp(req);
+      const remainingSeconds = Math.max(
+        1,
+        Math.ceil((new Date(session.expiryDate).getTime() - now) / 1000),
+      );
+      const speedMbps = parseFloat((session as any).speedMbps) || undefined;
+      await networkManager.grantAccess(clientIp, remainingSeconds, speedMbps);
+      await storage.updateAccessSession(session.sessionGuid, {
+        clientIp,
+        lastAccessAt: new Date(),
+      } as any);
+      await recordPortalEvent("access_granted", clientIp, {
+        tierId: (session as any).tierId,
+        paymentMethod: (session as any).paymentMethod,
+      });
+
+      console.log(`[Routes] Restored ${session.sessionGuid} for returning client ${clientIp}`);
+      return res.json({
+        restored: true,
+        tierName: (session as any).tierName,
+        expiryDate: session.expiryDate,
+      });
+    } catch (error) {
+      console.error("Access restoration error:", error);
+      return res.status(500).json({ error: "Failed to restore access" });
     }
   });
 
@@ -308,7 +856,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (password === config.admin.password) {
-        const token = `admin_token_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const token = signAdminToken();
         res.json({
           success: true,
           token,
@@ -322,15 +870,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/admin/extenders", requireAdmin, async (_req, res) => {
+    try {
+      res.json(await getExtenderStatus());
+    } catch (error) {
+      console.error("[Routes] Failed to read extender status:", error);
+      res.status(500).json({ error: "Failed to read extender status" });
+    }
+  });
+
   // Admin analytics — use SQLiteStorage.getAnalytics() if available, else fallback
   app.get("/api/admin/analytics", async (req, res) => {
     try {
-      const { authorization } = req.headers;
-
-      if (!authorization || !authorization.startsWith('Bearer admin_token_')) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
       if (storage.getAnalytics) {
         const analytics = await storage.getAnalytics();
         return res.json(analytics);
@@ -358,12 +909,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Admin session management
   app.get("/api/admin/sessions", async (req, res) => {
     try {
-      const { authorization } = req.headers;
-
-      if (!authorization || !authorization.startsWith('Bearer admin_token_')) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
       const { status, limit = 50, offset = 0 } = req.query;
 
       const allSessions = await storage.getActiveAccessSessions();
@@ -389,7 +934,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Active network clients — read from SQLite
-  app.get("/api/network/clients", async (req, res) => {
+  app.get("/api/network/clients", requireAdmin, async (req, res) => {
     try {
       const activeSessions = await storage.getActiveAccessSessions();
       res.json({
@@ -398,6 +943,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ip: (s as any).clientIp || 'unknown',
           tier: s.tierName,
           sessionGuid: s.sessionGuid,
+          startedAt: s.createdAt,
           expiryDate: s.expiryDate,
           status: s.status,
           speedMbps: (s as any).speedMbps || null
@@ -414,11 +960,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const activeSessions = await storage.getActiveAccessSessions();
       res.json({
         connectedClients: activeSessions.length,
-        clients: activeSessions.map(s => ({
-          ip: (s as any).clientIp || 'unknown',
-          tier: s.tierName,
-          expiryDate: s.expiryDate
-        }))
+        clients: []
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to get network status" });
@@ -426,7 +968,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Disconnect client — revoke ipset + update SQLite
-  app.delete("/api/network/clients/:ip", async (req, res) => {
+  app.delete("/api/network/clients/:ip", requireAdmin, async (req, res) => {
     try {
       const { ip } = req.params;
 
@@ -678,33 +1220,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ─── Initialize network + restore sessions from SQLite ───────────────────
   await networkManager.initialize();
 
-  // Boot restoration: re-add active sessions to ipset
-  try {
-    const activeSessions = await storage.getActiveAccessSessions();
-    let restored = 0;
-    const now = Date.now();
+  // Reconcile SQLite with the kernel allow-list on boot and periodically. A
+  // hostapd/network restart can recreate ipset without restarting this process.
+  let sessionReconciliationRunning = false;
+  const reconcileActiveSessions = async (reason: 'startup' | 'periodic') => {
+    if (sessionReconciliationRunning) return;
+    sessionReconciliationRunning = true;
+    try {
+      const activeSessions = await storage.getActiveAccessSessions();
+      let restored = 0;
+      const now = Date.now();
 
-    for (const session of activeSessions) {
-      const ip = (session as any).clientIp;
-      if (!ip) continue;
+      for (const session of activeSessions) {
+        const ip = (session as any).clientIp;
+        if (!ip) continue;
 
-      const remainingMs = new Date(session.expiryDate).getTime() - now;
-      const remainingSeconds = Math.ceil(remainingMs / 1000);
+        const remainingSeconds = Math.ceil(
+          (new Date(session.expiryDate).getTime() - now) / 1000,
+        );
+        if (remainingSeconds <= 0) continue;
 
-      if (remainingSeconds > 0) {
-        const speedMbps = parseFloat((session as any).speedMbps) || undefined;
-        await networkManager.grantAccess(ip, remainingSeconds, speedMbps);
-        restored++;
-      } else {
-        await storage.expireAccessSession(session.sessionGuid);
+        const advertised = parseFloat((session as any).speedMbps);
+        const speedMbps = Number.isFinite(advertised) ? advertised : undefined;
+        if (!(await networkManager.hasAccess(ip))) {
+          await networkManager.grantAccess(ip, remainingSeconds, speedMbps);
+          restored++;
+        } else if (reason === "startup" && speedMbps != null) {
+          await networkManager.setSpeedLimit(ip, speedMbps);
+        }
       }
-    }
 
-    if (restored > 0) {
-      console.log(`[Routes] Restored ${restored} active sessions from SQLite to ipset`);
+      const newestSessionByIp = new Map<string, { sessionGuid: string; dataUsedMB: number }>();
+      for (const session of activeSessions) {
+        const ip = (session as any).clientIp as string | undefined;
+        if (!ip || newestSessionByIp.has(ip)) continue;
+        const expiry = new Date(session.expiryDate).getTime();
+        if (expiry <= now) continue;
+        newestSessionByIp.set(ip, {
+          sessionGuid: session.sessionGuid,
+          dataUsedMB: Number(session.dataUsedMB) || 0,
+        });
+      }
+      const usage = await networkManager.takeUsageMegabytes([...newestSessionByIp.keys()]);
+      for (const [ip, megabytes] of usage) {
+        const session = newestSessionByIp.get(ip);
+        if (!session || megabytes <= session.dataUsedMB) continue;
+        await storage.updateAccessSession(session.sessionGuid, { dataUsedMB: megabytes });
+      }
+
+      if (restored > 0) {
+        console.log(`[Routes] Restored ${restored} active sessions to ipset (${reason})`);
+      }
+    } catch (error) {
+      console.error(`[Routes] Failed to reconcile active sessions (${reason}):`, error);
+    } finally {
+      sessionReconciliationRunning = false;
     }
-  } catch (error) {
-    console.error('[Routes] Failed to restore sessions from SQLite:', error);
+  };
+
+  await reconcileActiveSessions('startup');
+  if (process.platform === 'linux') {
+    const reconciliationTimer = setInterval(
+      () => void reconcileActiveSessions('periodic'),
+      20_000,
+    );
+    reconciliationTimer.unref();
   }
 
   const httpServer = createServer(app);

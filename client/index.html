@@ -3,20 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
-    <title>MeshLink - Free Internet for Everyone | Decentralized WiFi Network</title>
-    <meta name="description" content="Connect to MeshLink for free internet access or upgrade to premium with Mesh tokens. Join the community-driven alternative to traditional ISPs." />
-    <meta name="keywords" content="meshlink, free wifi, free internet, decentralized network, mesh tokens, community wifi, peer-to-peer internet" />
-    <meta property="og:title" content="MeshLink - Free Internet for Everyone" />
-    <meta property="og:description" content="Access free internet or upgrade to premium speeds with Mesh tokens on the decentralized MeshLink network." />
+    <title>meshlink Wi-Fi Access Portal</title>
+    <meta name="description" content="Connect through meshlink by choosing an available Wi-Fi service tier." />
+    <meta property="og:title" content="meshlink Wi-Fi Access Portal" />
+    <meta property="og:description" content="Choose an available service tier and connect to Wi-Fi." />
     <meta property="og:type" content="website" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      html, body { margin: 0; min-height: 100%; background: #f8fafc; font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      .portal-loading { min-height: 100vh; display: grid; place-items: center; color: #0f172a; }
+      .portal-loading > div { text-align: center; }
+      .portal-loading strong { display: block; font-size: 1.25rem; margin-bottom: .5rem; }
+      .portal-loading span { color: #64748b; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="portal-loading">
+        <div><strong>meshlink</strong><span>Opening secure portal…</span></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
-    <!-- This is a replit script which adds a banner on the top of the page when opened in development mode outside the replit environment -->
-    <script type="text/javascript" src="https://replit.com/public/js/replit-dev-banner.js"></script>
   </body>
 </html>

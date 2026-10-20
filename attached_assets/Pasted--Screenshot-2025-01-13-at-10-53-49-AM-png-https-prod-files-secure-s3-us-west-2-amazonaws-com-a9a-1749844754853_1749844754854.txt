@@ -85,7 +85,7 @@ opkg install nodogsplash
 
 Protocol
 
-MeshLink
+meshlink
 
 https://reticulum.network/
 
@@ -95,7 +95,7 @@ MESH
 
 Reddit:
 
-https://www.reddit.com/r/MeshLink/
+https://www.reddit.com/r/meshlink/
 
 Raspberry Pi Credentials
 
@@ -168,7 +168,7 @@ echo "All done!"
 
 ```
 
-MeshLink
+meshlink
 
 subscribe
 

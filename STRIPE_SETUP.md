@@ -1,6 +1,6 @@
-# Stripe Checkout Integration for MeshLink Node Operators
+# Stripe Checkout Integration for meshlink Node Operators
 
-This guide explains how to set up Stripe payments for your MeshLink node using server-side Checkout Sessions. The broker creates checkout sessions dynamically, grants temporary internet access so the client can reach Stripe, and verifies payment server-side before granting full access.
+This guide explains how to set up Stripe payments for your meshlink node using server-side Checkout Sessions. The broker creates checkout sessions dynamically, grants temporary internet access so the client can reach Stripe, and verifies payment server-side before granting full access.
 
 ## How It Works
 

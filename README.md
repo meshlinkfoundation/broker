@@ -1,10 +1,10 @@
-# MeshLink Broker
+# meshlink Broker
 
-The **MeshLink Broker** is the captive portal and access management server that runs on each MeshLink node (Raspberry Pi). It provides the web interface for connecting users, processes payments, enforces bandwidth tiers via iptables/ipset, and exposes admin/analytics APIs.
+The **meshlink Broker** is the captive portal and access management server that runs on each meshlink node (Raspberry Pi). It provides the web interface for connecting users, processes payments, enforces bandwidth tiers via iptables/ipset, and exposes admin/analytics APIs.
 
 ## Features
 
-- **Captive Portal UI** — React + Tailwind + shadcn/ui interface shown to devices joining the MeshLink WiFi network
+- **Captive Portal UI** — React + Tailwind + shadcn/ui interface shown to devices joining the meshlink WiFi network
 - **Tiered Access Control** — Free, Lightweight, and Premium tiers with configurable bandwidth limits, data caps, and durations
 - **Stripe Checkout Integration** — Server-side Checkout Sessions with temporary access grant during payment flow (see [STRIPE_SETUP.md](STRIPE_SETUP.md))
 - **Network Management** — iptables REDIRECT + ipset-based client authorization, managed programmatically from the broker
@@ -40,8 +40,10 @@ broker/
 │   ├── vite.ts           # Dev/prod serving
 │   ├── storage.ts        # SQLite database layer
 │   ├── network-manager.ts # iptables/ipset management
+│   ├── service-profiles.ts # Profile loading and activation
 │   └── config/
-│       └── meshlink-config.json  # Tier, branding, and feature config
+│       ├── meshlink-config.json  # Node, network, payment, and default tier config
+│       └── profiles/             # Swappable pricing/branding profiles
 ├── shared/               # Shared TypeScript types
 ├── package.json
 ├── vite.config.ts
@@ -79,15 +81,44 @@ Edit **`server/config/meshlink-config.json`** — changes take effect without re
 | `speedMbps` | number | Bandwidth limit for QoS. |
 | `isFree` | boolean | `true` skips the payment step. |
 | `acceptStripePayments` | boolean | Enable Stripe Checkout for this tier. |
-| `acceptCryptoPayments` | boolean | Enable crypto payments (if feature enabled). |
 
 ### Other config sections
 
 - **`nodeInfo`** — Node name, location, operator (shown on portal)
 - **`branding`** — Logo text, tagline, colors
-- **`features`** — Global toggles (crypto, wallet, redirect URL)
+- **`features`** — Global toggles (redirect URL and optional payment methods)
 - **`payments.stripe`** — Stripe on/off, currency, payment methods
 - **`admin`** — Dashboard password and enable/disable
+
+## Service Profiles
+
+Service profiles let an operator switch the portal's branding and service tiers for a particular venue without changing the node's network, payment, or security settings. The included examples are:
+
+- `farmers-market` — preview access, a market day pass, and a vendor pass
+- `restaurant` — free guest access and a longer work session
+- `marina-starlink` — harbor day and crew week plans
+
+To activate one on a node:
+
+1. Open the node's `/admin` page and sign in.
+2. Select **Profiles**.
+3. Review the tiers, select **Activate Profile**, and confirm.
+
+The change takes effect immediately and is saved across restarts. New signups see the selected profile; sessions that have already started keep their original price, duration, speed, and data allowance. Selecting **Default Node Configuration** switches back to the tiers in `meshlink-config.json`.
+
+Profiles are JSON files in `server/config/profiles/`. A basic profile contains an ID, display name, optional branding, and a `pricing.tiers` array. Set `branding.logoText` to the venue name shown throughout the customer portal; when omitted, the profile name is used. Profiles intentionally cannot override node credentials, payment secrets, network interfaces, or security settings.
+
+For automation, an operator can use the same admin bearer token as the dashboard:
+
+```http
+GET /api/admin/profiles
+Authorization: Bearer <admin-token>
+
+POST /api/admin/profiles/farmers-market/activate
+Authorization: Bearer <admin-token>
+```
+
+The active selection is runtime state stored in `server/config/active-profile.json`; it should not be committed.
 
 ## API Endpoints
 
@@ -95,9 +126,11 @@ Edit **`server/config/meshlink-config.json`** — changes take effect without re
 |--------|------|------|-------------|
 | GET | `/api/health` | No | Health check + uptime |
 | GET | `/api/config` | No | Public node/tier config |
-| GET | `/api/network/clients` | No | Connected clients list |
-| DELETE | `/api/network/clients/:ip` | No | Disconnect a client |
+| GET | `/api/network/clients` | Bearer | Connected clients list |
+| DELETE | `/api/network/clients/:ip` | Bearer | Disconnect a client |
 | POST | `/api/admin/login` | No | Get admin token |
+| GET | `/api/admin/profiles` | Bearer | List profiles and active selection |
+| POST | `/api/admin/profiles/:profileId/activate` | Bearer | Activate a profile immediately |
 | GET | `/api/admin/analytics` | Bearer | Session/revenue analytics |
 | GET | `/api/admin/sessions` | Bearer | Paginated session list |
 | DELETE | `/api/admin/sessions/:id` | Bearer | Revoke a session |
@@ -106,7 +139,7 @@ Edit **`server/config/meshlink-config.json`** — changes take effect without re
 
 ## Deployment
 
-See [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) for Raspberry Pi setup and [STRIPE_SETUP.md](STRIPE_SETUP.md) for payment configuration.
+See [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) for Raspberry Pi setup and [STRIPE_SETUP.md](STRIPE_SETUP.md) for card payments. MESH payments and the protocol whitepaper are in [meshlink-onchain](https://github.com/meshlinkfoundation/meshlink-onchain).
 
 ## Related Docs
 
@@ -114,6 +147,5 @@ See [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) for Raspberry Pi se
 - [ACCESS_MANAGEMENT.md](ACCESS_MANAGEMENT.md) — ipset-based access control details
 - [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) — Pi 5 deployment guide
 - [OPENWRT_DEPLOYMENT.md](OPENWRT_DEPLOYMENT.md) — OpenWRT deployment guide
-- [MESHLINK_WHITEPAPER.md](MESHLINK_WHITEPAPER.md) — Full protocol whitepaper
 - [SECURITY.md](SECURITY.md) — Security policy
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Contribution guidelines

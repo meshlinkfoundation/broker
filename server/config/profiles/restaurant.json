@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "restaurant",
+  "name": "Restaurant Guest Wi-Fi",
+  "description": "Simple complimentary access for restaurant and café guests.",
+  "branding": {
+    "logoText": "Restaurant Guest Wi-Fi",
+    "tagline": "Guest Wi-Fi — enjoy your visit"
+  },
+  "pricing": {
+    "currency": "MESH",
+    "fiatCurrency": "USD",
+    "tiers": [
+      {
+        "id": "restaurant-guest",
+        "name": "Guest Access",
+        "description": "Complimentary access for dining guests",
+        "price": 0,
+        "fiatPrice": 0,
+        "dataLimitMB": 1024,
+        "durationHours": 2,
+        "speedMbps": 10,
+        "features": ["2 hours", "1 GB", "Browsing and messaging"],
+        "buttonText": "Connect Free",
+        "buttonColor": "green",
+        "isFree": true,
+        "isPopular": true,
+        "enabled": true,
+        "acceptStripePayments": false,
+        "acceptCryptoPayments": false
+      },
+      {
+        "id": "restaurant-work",
+        "name": "Work Session",
+        "description": "Extended high-speed access for remote work",
+        "price": 5,
+        "fiatPrice": 1,
+        "dataLimitMB": 5120,
+        "durationHours": 6,
+        "speedMbps": 40,
+        "features": ["6 hours", "5 GB", "Video meetings"],
+        "buttonText": "Pay 5 MESH",
+        "buttonColor": "blue",
+        "isFree": false,
+        "isPopular": false,
+        "enabled": true,
+        "acceptStripePayments": true,
+        "acceptCryptoPayments": true
+      }
+    ]
+  }
+}

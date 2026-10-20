@@ -9,6 +9,12 @@ import type {
 } from "../shared/schema";
 import type { IStorage } from './storage';
 
+function storedDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const normalized = /[zZ]|[+-]\d{2}:?\d{2}$/.test(value) ? value : `${value.replace(' ', 'T')}Z`;
+  return new Date(normalized);
+}
+
 export class SQLiteStorage implements IStorage {
   private db: Database.Database;
 
@@ -113,6 +119,23 @@ export class SQLiteStorage implements IStorage {
       )
     `);
 
+    // Privacy-light, first-party captive portal funnel. One row per IP/event/tier/method
+    // per local calendar day keeps refreshes and payment retries from inflating counts.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS portal_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        eventDay TEXT NOT NULL,
+        eventName TEXT NOT NULL,
+        clientIp TEXT NOT NULL,
+        visitId TEXT NOT NULL DEFAULT '',
+        tierId TEXT NOT NULL DEFAULT '',
+        paymentMethod TEXT NOT NULL DEFAULT '',
+        metadata TEXT NOT NULL DEFAULT '{}',
+        createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(eventDay, eventName, clientIp, tierId, paymentMethod)
+      )
+    `);
+
     // Migrations: add columns if missing (existing DBs)
     for (const migration of [
       `ALTER TABLE access_sessions ADD COLUMN clientIp TEXT`,
@@ -128,6 +151,7 @@ export class SQLiteStorage implements IStorage {
       CREATE INDEX IF NOT EXISTS idx_access_sessions_user ON access_sessions(userIdentifier);
       CREATE INDEX IF NOT EXISTS idx_access_sessions_status ON access_sessions(status);
       CREATE INDEX IF NOT EXISTS idx_access_sessions_created ON access_sessions(createdAt);
+      CREATE INDEX IF NOT EXISTS idx_portal_events_day_name ON portal_events(eventDay, eventName);
     `);
   }
 
@@ -336,10 +360,24 @@ export class SQLiteStorage implements IStorage {
     // Convert dates back to Date objects for compatibility
     return {
       ...this.convertBooleans(result),
-      startDate: new Date(result.startDate),
-      expiryDate: new Date(result.expiryDate),
-      createdAt: new Date(result.createdAt),
-      lastAccessAt: result.lastAccessAt ? new Date(result.lastAccessAt) : null
+      startDate: storedDate(result.startDate),
+      expiryDate: storedDate(result.expiryDate),
+      createdAt: storedDate(result.createdAt),
+      lastAccessAt: storedDate(result.lastAccessAt)
+    } as AccessSession;
+  }
+
+  async getAccessSessionByPaymentReference(paymentReference: string): Promise<AccessSession | undefined> {
+    const stmt = this.db.prepare('SELECT * FROM access_sessions WHERE paymentReference = ? ORDER BY createdAt DESC LIMIT 1');
+    const result = stmt.get(paymentReference);
+    if (!result) return undefined;
+
+    return {
+      ...this.convertBooleans(result),
+      startDate: storedDate(result.startDate),
+      expiryDate: storedDate(result.expiryDate),
+      createdAt: storedDate(result.createdAt),
+      lastAccessAt: storedDate(result.lastAccessAt)
     } as AccessSession;
   }
 
@@ -348,10 +386,10 @@ export class SQLiteStorage implements IStorage {
     const results = stmt.all(userIdentifier);
     return results.map(result => ({
       ...this.convertBooleans(result),
-      startDate: new Date(result.startDate),
-      expiryDate: new Date(result.expiryDate),
-      createdAt: new Date(result.createdAt),
-      lastAccessAt: result.lastAccessAt ? new Date(result.lastAccessAt) : null
+      startDate: storedDate(result.startDate),
+      expiryDate: storedDate(result.expiryDate),
+      createdAt: storedDate(result.createdAt),
+      lastAccessAt: storedDate(result.lastAccessAt)
     })) as AccessSession[];
   }
 
@@ -371,7 +409,8 @@ export class SQLiteStorage implements IStorage {
       'Premium Speed': 2.99,
       'Unlimited Pro': 19.99
     };
-    const price = tierPrices[session.tierName] || 0;
+    const configuredPrice = Number((session as any).price);
+    const price = Number.isFinite(configuredPrice) ? configuredPrice : (tierPrices[session.tierName] || 0);
 
     stmt.run(
       session.sessionGuid,
@@ -417,16 +456,47 @@ export class SQLiteStorage implements IStorage {
     const results = stmt.all();
     return results.map(result => ({
       ...this.convertBooleans(result),
-      startDate: new Date(result.startDate),
-      expiryDate: new Date(result.expiryDate),
-      createdAt: new Date(result.createdAt),
-      lastAccessAt: result.lastAccessAt ? new Date(result.lastAccessAt) : null
+      startDate: storedDate(result.startDate),
+      expiryDate: storedDate(result.expiryDate),
+      createdAt: storedDate(result.createdAt),
+      lastAccessAt: storedDate(result.lastAccessAt)
     })) as AccessSession[];
   }
 
   async expireAccessSession(sessionGuid: string): Promise<void> {
     const stmt = this.db.prepare(`UPDATE access_sessions SET status = 'expired' WHERE sessionGuid = ?`);
     stmt.run(sessionGuid);
+  }
+
+  async recordPortalEvent(event: {
+    eventName: string;
+    clientIp: string;
+    visitId?: string;
+    tierId?: string;
+    paymentMethod?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    const now = new Date();
+    const eventDay = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0'),
+    ].join('-');
+    const metadata = JSON.stringify(event.metadata || {}).slice(0, 2000);
+
+    this.db.prepare(`
+      INSERT OR IGNORE INTO portal_events
+        (eventDay, eventName, clientIp, visitId, tierId, paymentMethod, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      eventDay,
+      event.eventName,
+      event.clientIp,
+      event.visitId || '',
+      event.tierId || '',
+      event.paymentMethod || '',
+      metadata,
+    );
   }
 
   // Custom analytics method for admin dashboard
@@ -448,20 +518,124 @@ export class SQLiteStorage implements IStorage {
     const stripePayments = this.db.prepare("SELECT COUNT(*) as count FROM access_sessions WHERE paymentMethod = 'stripe'").get() as { count: number };
     const cryptoPayments = this.db.prepare("SELECT COUNT(*) as count FROM access_sessions WHERE paymentMethod = 'crypto'").get() as { count: number };
     
-    const recentSessions = this.db.prepare(`
-      SELECT sessionGuid, tierName, paymentMethod, status, dataUsedMB, createdAt, expiryDate
-      FROM access_sessions 
-      ORDER BY createdAt DESC 
-      LIMIT 10
-    `).all() as Array<{
+    const recentSessionColumns = `
+      SELECT sessionGuid, clientIp, tierName, paymentMethod, status, dataUsedMB, createdAt, expiryDate
+      FROM access_sessions
+    `;
+    const sessionTimestamp = (value: string) => {
+      if (!value || /[zZ]|[+-]\d{2}:\d{2}$/.test(value)) return value;
+      return `${value.replace(' ', 'T')}Z`;
+    };
+    const mapSessionRow = (row: {
       sessionGuid: string;
+      clientIp: string | null;
       tierName: string;
       paymentMethod: string;
       status: string;
       dataUsedMB: number;
       createdAt: string;
       expiryDate: string;
-    }>;
+    }) => ({
+      ...row,
+      createdAt: sessionTimestamp(row.createdAt),
+      expiryDate: sessionTimestamp(row.expiryDate),
+    });
+    const recentSessions = (this.db.prepare(`
+      ${recentSessionColumns}
+      ORDER BY createdAt DESC
+      LIMIT 10
+    `).all() as Array<{
+      sessionGuid: string;
+      clientIp: string | null;
+      tierName: string;
+      paymentMethod: string;
+      status: string;
+      dataUsedMB: number;
+      createdAt: string;
+      expiryDate: string;
+    }>).map(mapSessionRow);
+    const sessionsStartedToday = (this.db.prepare(`
+      ${recentSessionColumns}
+      WHERE date(createdAt, 'localtime') = date('now', 'localtime')
+      ORDER BY createdAt DESC
+    `).all() as Array<{
+      sessionGuid: string;
+      clientIp: string | null;
+      tierName: string;
+      paymentMethod: string;
+      status: string;
+      dataUsedMB: number;
+      createdAt: string;
+      expiryDate: string;
+    }>).map(mapSessionRow);
+
+    const portalEventRows = this.db.prepare(`
+      SELECT eventName, COUNT(*) AS eventCount, COUNT(DISTINCT clientIp) AS uniqueIps
+      FROM portal_events
+      WHERE eventDay = date('now', 'localtime')
+      GROUP BY eventName
+    `).all() as Array<{ eventName: string; eventCount: number; uniqueIps: number }>;
+    const portalEventMap = new Map(portalEventRows.map((row) => [row.eventName, row]));
+    const funnelDefinitions = [
+      { eventName: 'portal_viewed', label: 'Portal viewed' },
+      { eventName: 'tier_selected', label: 'Tier selected' },
+      { eventName: 'checkout_started', label: 'Checkout started' },
+      { eventName: 'payment_succeeded', label: 'Paid' },
+      { eventName: 'access_granted', label: 'Access granted' },
+    ];
+    const portalVisitors = portalEventMap.get('portal_viewed')?.uniqueIps || 0;
+    const portalFunnelSteps = funnelDefinitions.map((definition) => {
+      const row = portalEventMap.get(definition.eventName);
+      const uniqueIps = row?.uniqueIps || 0;
+      return {
+        ...definition,
+        uniqueIps,
+        eventCount: row?.eventCount || 0,
+        conversionFromPortal: portalVisitors > 0
+          ? Math.round((uniqueIps / portalVisitors) * 1000) / 10
+          : 0,
+      };
+    });
+    const accessByMethodRows = this.db.prepare(`
+      SELECT paymentMethod, COUNT(DISTINCT clientIp) AS uniqueIps
+      FROM portal_events
+      WHERE eventDay = date('now', 'localtime') AND eventName = 'access_granted'
+      GROUP BY paymentMethod
+    `).all() as Array<{ paymentMethod: string; uniqueIps: number }>;
+    const hourlyEventRows = this.db.prepare(`
+      SELECT
+        CAST(strftime('%H', createdAt || 'Z', 'localtime') AS INTEGER) AS hour,
+        eventName,
+        COUNT(DISTINCT clientIp) AS uniqueIps
+      FROM portal_events
+      WHERE eventDay = date('now', 'localtime')
+      GROUP BY hour, eventName
+      ORDER BY hour
+    `).all() as Array<{ hour: number; eventName: string; uniqueIps: number }>;
+    const hourlyActivity = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      label: new Date(2000, 0, 1, hour).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+      }),
+      portalViews: 0,
+      tierSelections: 0,
+      checkouts: 0,
+      payments: 0,
+      accessGrants: 0,
+    }));
+    const hourlyFieldByEvent: Record<string, keyof (typeof hourlyActivity)[number]> = {
+      portal_viewed: 'portalViews',
+      tier_selected: 'tierSelections',
+      checkout_started: 'checkouts',
+      payment_succeeded: 'payments',
+      access_granted: 'accessGrants',
+    };
+    hourlyEventRows.forEach((row) => {
+      const field = hourlyFieldByEvent[row.eventName];
+      if (field && hourlyActivity[row.hour]) {
+        (hourlyActivity[row.hour] as any)[field] = row.uniqueIps;
+      }
+    });
 
     // Build tier stats with defaults
     const tierStatsMap = {
@@ -492,7 +666,17 @@ export class SQLiteStorage implements IStorage {
         stripe: stripePayments.count,
         crypto: cryptoPayments.count
       },
-      recentSessions
+      portalFunnel: {
+        date: new Date().toLocaleDateString('en-CA'),
+        uniquePortalIps: portalVisitors,
+        steps: portalFunnelSteps,
+        accessByMethod: Object.fromEntries(
+          accessByMethodRows.map((row) => [row.paymentMethod || 'unknown', row.uniqueIps]),
+        ),
+        hourlyActivity,
+      },
+      recentSessions,
+      sessionsToday: sessionsStartedToday,
     };
   }
 

@@ -1,6 +1,6 @@
 {
   "nodeInfo": {
-    "name": "MeshLink_Free",
+    "name": "meshlink_Free",
     "location": "Downtown WiFi Hub",
     "operator": "Community Node #142"
   },
@@ -87,7 +87,7 @@
   "branding": {
     "primaryColor": "#2563eb",
     "secondaryColor": "#16a34a",
-    "logoText": "MeshLink",
+    "logoText": "meshlink",
     "tagline": "Free Internet for Everyone",
     "showCommunityBadge": true
   },
