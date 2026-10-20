@@ -12,7 +12,6 @@ import { createChainClient, type ActiveNetwork, type Address, type Hex } from ".
 import { startPaymentListener, type PaymentEvent } from "./payment-listener";
 import type { PublicClient } from "viem";
 import { getPortalTls, portalPublicConfig } from "./portal-tls";
-import { getExtenderStatus } from "./extenders";
 import {
   activateServiceProfile,
   listServiceProfiles,
@@ -867,15 +866,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ error: "Authentication failed" });
-    }
-  });
-
-  app.get("/api/admin/extenders", requireAdmin, async (_req, res) => {
-    try {
-      res.json(await getExtenderStatus());
-    } catch (error) {
-      console.error("[Routes] Failed to read extender status:", error);
-      res.status(500).json({ error: "Failed to read extender status" });
     }
   });
 

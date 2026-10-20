@@ -8,7 +8,7 @@
     "tagline": "Guest Wi-Fi — enjoy your visit"
   },
   "pricing": {
-    "currency": "MESH",
+    "currency": "USD",
     "fiatCurrency": "USD",
     "tiers": [
       {
@@ -39,13 +39,13 @@
         "durationHours": 6,
         "speedMbps": 40,
         "features": ["6 hours", "5 GB", "Video meetings"],
-        "buttonText": "Pay 5 MESH",
+        "buttonText": "Pay $1",
         "buttonColor": "blue",
         "isFree": false,
         "isPopular": false,
         "enabled": true,
         "acceptStripePayments": true,
-        "acceptCryptoPayments": true
+        "acceptCryptoPayments": false
       }
     ]
   }

@@ -9,7 +9,7 @@
     "showCommunityBadge": false
   },
   "pricing": {
-    "currency": "MESH",
+    "currency": "USD",
     "fiatCurrency": "USD",
     "tiers": [
       {

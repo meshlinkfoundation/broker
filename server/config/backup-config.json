@@ -5,7 +5,7 @@
     "operator": "Community Node #142"
   },
   "pricing": {
-    "currency": "MESH",
+    "currency": "USD",
     "fiatCurrency": "USD",
     "tiers": [
       {
@@ -50,7 +50,7 @@
         "isFree": false,
         "isPopular": true,
         "acceptStripePayments": true,
-        "acceptCryptoPayments": true,
+        "acceptCryptoPayments": false,
         "stripePaymentLink": "https://buy.stripe.com/test_00000000000000000001"
       },
       {
@@ -73,7 +73,7 @@
         "isFree": false,
         "isPopular": false,
         "acceptStripePayments": true,
-        "acceptCryptoPayments": true,
+        "acceptCryptoPayments": false,
         "stripePaymentLink": "https://buy.stripe.com/test_00000000000000000002"
       }
     ]

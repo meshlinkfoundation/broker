@@ -116,6 +116,7 @@ interface ServiceProfileTier {
   id: string;
   name: string;
   price?: number;
+  fiatPrice?: number;
   durationHours: number;
   speedMbps: number | string;
   dataLimitMB: number;
@@ -133,27 +134,6 @@ interface ServiceProfile {
     currency?: string;
     tiers: ServiceProfileTier[];
   };
-}
-
-interface ExtenderStatus {
-  name: string;
-  hostname: string;
-  mac: string;
-  ip: string | null;
-  linked: boolean;
-  signalDbm: number | null;
-  snr: number | null;
-  lastHeardSeconds: number | null;
-  txRate: string | null;
-}
-
-interface ExtenderReport {
-  accessPoint: {
-    name: string;
-    ip: string | null;
-    reachable: boolean;
-  };
-  extenders: ExtenderStatus[];
 }
 
 interface ServiceProfilesResponse {
@@ -208,7 +188,6 @@ export default function AdminDashboard() {
         queryClient.invalidateQueries({ queryKey: ["/api/admin/sessions"] });
         queryClient.invalidateQueries({ queryKey: ["/api/network/clients"] });
         queryClient.invalidateQueries({ queryKey: ["/api/admin/profiles"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/admin/extenders"] });
         toast({
           title: "Authentication Successful",
           description: `Welcome to ${data.nodeInfo.name} dashboard`,
@@ -322,19 +301,6 @@ export default function AdminDashboard() {
     enabled: isAuthenticated && !!authToken,
   });
 
-  const { data: extenderReport } = useQuery<ExtenderReport>({
-    queryKey: ["/api/admin/extenders"],
-    queryFn: async () => {
-      const response = await fetch('/api/admin/extenders', {
-        headers: { 'Authorization': `Bearer ${authToken}` },
-      });
-      requireAdminResponse(response, 'Failed to fetch extenders');
-      return response.json();
-    },
-    enabled: isAuthenticated && !!authToken,
-    refetchInterval: 15000,
-  });
-
   const activateProfileMutation = useMutation({
     mutationFn: async (profileId: string) => {
       const response = await fetch(`/api/admin/profiles/${encodeURIComponent(profileId)}/activate`, {
@@ -443,29 +409,11 @@ export default function AdminDashboard() {
     }
   };
 
-  const snrTone = (snr: number) => {
-    if (snr < 10) return { label: "Poor", className: "bg-red-100 text-red-700" };
-    if (snr < 20) return { label: "Low", className: "bg-orange-100 text-orange-700" };
-    if (snr < 30) return { label: "Fair", className: "bg-amber-100 text-amber-700" };
-    if (snr < 40) return { label: "Good", className: "bg-yellow-100 text-yellow-800" };
-    if (snr < 50) return { label: "Strong", className: "bg-lime-100 text-lime-800" };
-    if (snr < 60) return { label: "Very good", className: "bg-green-100 text-green-700" };
-    return { label: "Excellent", className: "bg-emerald-200 text-emerald-800" };
-  };
-
-  const formatHeard = (seconds: number | null) => {
-    if (seconds == null) return "—";
-    if (seconds < 5) return "just now";
-    if (seconds < 60) return `${seconds}s ago`;
-    return `${Math.round(seconds / 60)}m ago`;
-  };
-
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/admin/sessions"] });
     queryClient.invalidateQueries({ queryKey: ["/api/network/clients"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/analytics"] });
     queryClient.invalidateQueries({ queryKey: ["/api/admin/profiles"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/admin/extenders"] });
     toast({ title: "Refreshed", description: "Dashboard data refreshed" });
   };
 
@@ -618,74 +566,6 @@ export default function AdminDashboard() {
         {/* Overview Tab */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>HaLow</CardTitle>
-                <p className="text-sm text-gray-600">
-                  Black is the access point. The extenders join it.
-                </p>
-              </CardHeader>
-              <CardContent>
-                <div className="border rounded-lg">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Unit</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Signal</TableHead>
-                        <TableHead>Last heard</TableHead>
-                        <TableHead>Link</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell>
-                          <div className="font-medium">Black</div>
-                          <div className="text-xs text-gray-500 font-mono">{extenderReport?.accessPoint.ip || "halow-black"}</div>
-                        </TableCell>
-                        <TableCell>
-                          {extenderReport?.accessPoint.reachable ? (
-                            <Badge>Access point</Badge>
-                          ) : (
-                            <Badge variant="destructive">Not answering</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm text-gray-500">—</TableCell>
-                        <TableCell className="text-sm text-gray-500">—</TableCell>
-                        <TableCell className="text-sm text-gray-500">—</TableCell>
-                      </TableRow>
-                      {(extenderReport?.extenders || []).map((extender) => (
-                        <TableRow key={extender.mac}>
-                          <TableCell>
-                            <div className="font-medium">{extender.name}</div>
-                            <div className="text-xs text-gray-500 font-mono">{extender.ip || extender.hostname || extender.mac}</div>
-                          </TableCell>
-                          <TableCell>
-                            {!extenderReport?.accessPoint.reachable ? (
-                              <Badge variant="outline">Can't check</Badge>
-                            ) : extender.linked ? (
-                              <Badge>Linked</Badge>
-                            ) : (
-                              <Badge variant="destructive">Not linked</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            {extender.signalDbm == null ? "—" : `${extender.signalDbm} dBm`}
-                            {extender.snr != null ? (
-                              <span className={`ml-2 inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${snrTone(extender.snr).className}`}>
-                                SNR {extender.snr} · {snrTone(extender.snr).label}
-                              </span>
-                            ) : null}
-                          </TableCell>
-                          <TableCell className="text-sm">{formatHeard(extender.lastHeardSeconds)}</TableCell>
-                          <TableCell className="text-sm">{extender.txRate || "—"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -1204,7 +1084,7 @@ export default function AdminDashboard() {
                               </div>
                             </div>
                             <Badge variant={tier.isFree ? "secondary" : "outline"}>
-                              {tier.isFree ? "Free" : `${tier.price || 0} ${profile.pricing.currency || "MESH"}`}
+                              {tier.isFree ? "Free" : tier.fiatPrice != null ? `$${Number.isInteger(tier.fiatPrice) ? tier.fiatPrice : tier.fiatPrice.toFixed(2)}` : `${tier.price || 0} ${profile.pricing.currency || "USD"}`}
                             </Badge>
                           </div>
                         ))}

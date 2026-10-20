@@ -14,7 +14,6 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
-    "@esbuild/darwin-arm64": "^0.27.2",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@neondatabase/serverless": "^0.10.4",
@@ -111,10 +110,13 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.1",
-    "typescript": "5.6.3",
+    "typescript": "5.9.3",
     "vite": "^5.4.14"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
+  },
+  "overrides": {
+    "proxy-addr": "2.0.8"
   }
 }

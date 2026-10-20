@@ -1,0 +1,32 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: npm ci and build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    container:
+      image: node:20-trixie
+      options: --user root
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y git ca-certificates
+
+      - uses: actions/checkout@v4
+
+      - name: Clean install
+        run: npm ci --no-audit
+
+      - name: Build
+        run: npm run build

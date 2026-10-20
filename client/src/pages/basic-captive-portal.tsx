@@ -279,6 +279,14 @@ export default function BasicCaptivePortal() {
 
   const brand = config?.branding?.logoText || config?.nodeInfo?.name || "Wi-Fi Access";
   const stripeEnabled = Boolean(config?.payments?.stripe?.enabled || config?.stripe?.enabled);
+  const cryptoEnabled = Boolean(config?.payments?.crypto?.enabled);
+  const tierPriceLabel = (tier: ServiceTier) => {
+    if (tier.isFree) return "Free";
+    const offerMesh = cryptoEnabled && tier.acceptCryptoPayments && !(stripeEnabled && tier.acceptStripePayments);
+    if (!offerMesh && tier.fiatPrice != null) return formatDollars(tier.fiatPrice);
+    if (offerMesh) return `${tier.price ?? 0} MESH`;
+    return tier.fiatPrice != null ? formatDollars(tier.fiatPrice) : "Paid";
+  };
 
   return (
     <main style={{ minHeight: "100vh", background: "#f8fafc", color: "#0f172a", padding: "24px", boxSizing: "border-box", display: "grid", placeItems: "center" }}>
@@ -301,11 +309,7 @@ export default function BasicCaptivePortal() {
                 <div style={{ paddingRight: tier.isPopular ? 76 : 0 }}>
                   <div style={{ fontSize: 18, fontWeight: 750 }}>{tier.name}</div>
                   <div style={{ color: "#2563eb", fontSize: 20, fontWeight: 800, marginTop: 4 }}>
-                    {tier.isFree
-                      ? "Free"
-                      : stripeEnabled && tier.acceptStripePayments && tier.fiatPrice != null
-                        ? formatDollars(tier.fiatPrice)
-                        : `${tier.price ?? 0} MESH`}
+                    {tierPriceLabel(tier)}
                   </div>
                 </div>
                 {tier.description ? <p style={{ color: "#64748b", margin: "8px 0 10px", lineHeight: 1.4 }}>{tier.description}</p> : null}
@@ -327,9 +331,7 @@ export default function BasicCaptivePortal() {
                     ? "Opening…"
                     : tier.isFree
                       ? (tier.buttonText || "Connect Free")
-                      : stripeEnabled && tier.acceptStripePayments && tier.fiatPrice != null
-                        ? `Pay ${formatDollars(tier.fiatPrice)}`
-                        : (tier.buttonText || `Pay ${tier.price ?? 0} MESH`)}
+                      : (tier.buttonText || `Pay ${tierPriceLabel(tier)}`)}
                 </button>
                 {walletTier?.id === tier.id ? (
                   <div style={{ marginTop: 12, borderRadius: 10, padding: 12, background: "#eff6ff", color: "#1e3a8a", fontSize: 13, lineHeight: 1.45 }}>
