@@ -11,6 +11,7 @@ The **meshlink Broker** is the captive portal and access management server that 
 - **Admin Dashboard** — Built-in admin UI at `/admin` with session management, analytics, and database viewer
 - **SQLite Storage** — All sessions, users, and analytics stored locally with no external database dependency
 - **REST API** — Full API for config, health, network clients, sessions, analytics, and payments
+- **Portal HTTPS** — Optional. A fresh node stays on the self-signed `portal.meshlink` name. A trusted custom domain and Let's Encrypt certificate are installed only when an operator asks for them ([PORTAL_HTTPS.md](PORTAL_HTTPS.md))
 
 ## Tech Stack
 
@@ -144,6 +145,7 @@ See [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) for Raspberry Pi se
 
 ## Related Docs
 
+- [PORTAL_HTTPS.md](PORTAL_HTTPS.md) — Optional custom domain and Let's Encrypt certificate
 - [STRIPE_SETUP.md](STRIPE_SETUP.md) — Stripe Checkout integration guide
 - [ACCESS_MANAGEMENT.md](ACCESS_MANAGEMENT.md) — ipset-based access control details
 - [RASPBERRY_PI_DEPLOYMENT.md](RASPBERRY_PI_DEPLOYMENT.md) — Pi 5 deployment guide
