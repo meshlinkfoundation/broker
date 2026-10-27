@@ -97,6 +97,7 @@ Service profiles let an operator switch the portal's branding and service tiers 
 - `farmers-market` — preview access, a market day pass, and a vendor pass
 - `restaurant` — free guest access and a longer work session
 - `marina-starlink` — harbor day and crew week plans
+- `pirate-net` — the same default tiers, drawn as the neon Pirate Net page. It is not the sign-in page until this profile is activated.
 
 To activate one on a node:
 

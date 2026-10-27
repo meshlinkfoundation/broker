@@ -7,6 +7,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import BasicCaptivePortal from "@/pages/basic-captive-portal";
 import { portalHttpsUpgradeUrl } from "@/lib/portal-https";
 
+const PirateCaptivePortal = lazy(() => import("@/pages/pirate-captive-portal"));
+
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const AdminDashboard = lazy(() => import("@/pages/admin-dashboard"));
 const WalletPortal = lazy(() => import("@/pages/captive-portal"));
@@ -87,6 +89,29 @@ function ConfiguredApp() {
   );
 }
 
+function PublicPortal() {
+  const [skin, setSkin] = useState<"pending" | "default" | "pirate">("pending");
+
+  useEffect(() => {
+    fetch("/api/config", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("config"))))
+      .then((config) => {
+        setSkin(config?.serviceProfile?.id === "pirate-net" ? "pirate" : "default");
+      })
+      .catch(() => setSkin("default"));
+  }, []);
+
+  if (skin === "pending") return null;
+  if (skin === "pirate") {
+    return (
+      <Suspense fallback={null}>
+        <PirateCaptivePortal />
+      </Suspense>
+    );
+  }
+  return <BasicCaptivePortal />;
+}
+
 export default function App() {
   const path = window.location.pathname;
   const isOperatorRoute = path === "/admin" || path.startsWith("/admin/") ||
@@ -94,7 +119,7 @@ export default function App() {
     path === "/wallet" || path.startsWith("/wallet/");
 
   if (!isOperatorRoute) {
-    return <BasicCaptivePortal />;
+    return <PublicPortal />;
   }
 
   return <ConfiguredApp />;

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "pirate-net",
+  "name": "Pirate Net",
+  "description": "Optional neon reskin. Same default offer: free, $2.99, and $9.99. The plain portal stays on until this profile is activated.",
+  "branding": {
+    "logoText": "Pirate Net",
+    "tagline": "Neon seas. Open channel. Jack in.",
+    "showCommunityBadge": false
+  },
+  "pricing": {
+    "currency": "USD",
+    "fiatCurrency": "USD",
+    "tiers": [
+      {
+        "id": "pirate-free",
+        "name": "Free Access",
+        "description": "Basic internet for browsing and messaging",
+        "price": 0,
+        "fiatPrice": 0,
+        "dataLimitMB": 500,
+        "durationHours": 24,
+        "speedMbps": 1,
+        "features": [
+          "500MB daily limit",
+          "1 Mbps speed",
+          "Web browsing & messaging"
+        ],
+        "buttonText": "Jack in",
+        "buttonColor": "green",
+        "isFree": true,
+        "isPopular": false,
+        "enabled": true,
+        "acceptStripePayments": false,
+        "acceptCryptoPayments": false
+      },
+      {
+        "id": "pirate-lightweight",
+        "name": "Lightweight",
+        "description": "Moderate speed for social media and casual browsing",
+        "price": 0,
+        "fiatPrice": 2.99,
+        "dataLimitMB": 2048,
+        "durationHours": 168,
+        "speedMbps": 25,
+        "features": [
+          "2GB weekly limit",
+          "25 Mbps speed",
+          "Social media & browsing"
+        ],
+        "buttonText": "Pay $2.99",
+        "buttonColor": "blue",
+        "isFree": false,
+        "isPopular": true,
+        "enabled": true,
+        "acceptStripePayments": true,
+        "acceptCryptoPayments": false
+      },
+      {
+        "id": "pirate-premium",
+        "name": "Premium",
+        "description": "Full speed for streaming, gaming, and heavy use",
+        "price": 0,
+        "fiatPrice": 9.99,
+        "dataLimitMB": 10240,
+        "durationHours": 168,
+        "speedMbps": 200,
+        "features": [
+          "10GB weekly limit",
+          "Full speed (up to 200 Mbps)",
+          "4K streaming & gaming"
+        ],
+        "buttonText": "Pay $9.99",
+        "buttonColor": "purple",
+        "isFree": false,
+        "isPopular": false,
+        "enabled": true,
+        "acceptStripePayments": true,
+        "acceptCryptoPayments": false
+      }
+    ]
+  }
+}
