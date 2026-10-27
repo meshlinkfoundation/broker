@@ -134,7 +134,7 @@
     }
   },
   "admin": {
-    "password": "change-me",
+    "password": "admin",
     "dashboardEnabled": true
   }
 }

@@ -152,6 +152,10 @@ export default function AdminDashboard() {
   const [editingRecord, setEditingRecord] = useState<AccessSession | null>(null);
   const [editFormData, setEditFormData] = useState<EditFormData>({});
   const [showEditDialog, setShowEditDialog] = useState(false);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -207,6 +211,42 @@ export default function AdminDashboard() {
       });
     } finally {
       setIsLogging(false);
+    }
+  };
+
+  const handlePasswordChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setIsChangingPassword(true);
+    try {
+      const response = await fetch("/api/admin/password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || "Password could not be changed");
+      }
+      setAuthToken(data.token);
+      localStorage.setItem("admin_token", data.token);
+      setCurrentPassword("");
+      setNewPassword("");
+      setShowPasswordForm(false);
+      toast({
+        title: "Password changed",
+        description: "Use the new password the next time you sign in.",
+      });
+    } catch (error) {
+      toast({
+        title: "Password not changed",
+        description: error instanceof Error ? error.message : "Password could not be changed",
+        variant: "destructive",
+      });
+    } finally {
+      setIsChangingPassword(false);
     }
   };
 
@@ -492,6 +532,7 @@ export default function AdminDashboard() {
               <Button type="submit" className="w-full" disabled={isLogging}>
                 {isLogging ? "Authenticating..." : "Login"}
               </Button>
+              <p className="text-xs text-gray-500 text-center">A new node signs in with admin. Change it after you log in.</p>
             </form>
           </CardContent>
         </Card>
@@ -556,12 +597,50 @@ export default function AdminDashboard() {
                 <RefreshCw className="w-4 h-4" />
               </Button>
             </div>
+            <Button variant="outline" onClick={() => setShowPasswordForm((open) => !open)} size="sm">
+              Password
+            </Button>
             <Button variant="outline" onClick={handleLogout} size="sm">
               <LogOut className="w-4 h-4 mr-2" />
               Logout
             </Button>
           </div>
         </div>
+
+        {showPasswordForm ? (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Change dashboard password</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handlePasswordChange} className="grid gap-4 max-w-md">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Current password</label>
+                  <Input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                    autoComplete="current-password"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">New password</label>
+                  <Input
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+                <Button type="submit" disabled={isChangingPassword} className="w-fit">
+                  {isChangingPassword ? "Saving..." : "Save password"}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        ) : null}
 
         {/* Overview Tab */}
         {activeTab === 'overview' && (

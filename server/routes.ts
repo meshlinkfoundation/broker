@@ -869,6 +869,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/admin/password", requireAdmin, (req, res) => {
+    try {
+      loadConfig();
+      const currentPassword = String(req.body?.currentPassword ?? "");
+      const newPassword = String(req.body?.newPassword ?? "").trim();
+      const savedPassword = String(config?.admin?.password ?? "");
+      if (!savedPassword || currentPassword !== savedPassword) {
+        return res.status(401).json({ error: "Current password is wrong" });
+      }
+      if (!newPassword || newPassword.length > 200) {
+        return res.status(400).json({ error: "Choose a new password" });
+      }
+      if (newPassword === savedPassword) {
+        return res.status(400).json({ error: "That is already the password" });
+      }
+      if (!baseConfig) {
+        throw new Error("Configuration not loaded");
+      }
+
+      baseConfig.admin = {
+        ...(baseConfig.admin || {}),
+        password: newPassword,
+        dashboardEnabled: baseConfig.admin?.dashboardEnabled !== false,
+      };
+      const configPath = path.join(process.cwd(), "server", "config", "meshlink-config.json");
+      const temporaryPath = `${configPath}.${process.pid}.tmp`;
+      fs.writeFileSync(temporaryPath, `${JSON.stringify(baseConfig, null, 2)}\n`);
+      fs.renameSync(temporaryPath, configPath);
+      loadConfig();
+
+      res.json({ success: true, token: signAdminToken() });
+    } catch (error) {
+      console.error("Admin password change error:", error);
+      res.status(500).json({ error: "Password could not be changed" });
+    }
+  });
+
   // Admin analytics — use SQLiteStorage.getAnalytics() if available, else fallback
   app.get("/api/admin/analytics", async (req, res) => {
     try {

@@ -26,7 +26,43 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Clean install
-        run: npm ci --no-audit
+        run: npm ci --no-audit --no-fund
 
       - name: Build
         run: npm run build
+
+  publish-dist:
+    name: Publish prebuilt dist
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    container:
+      image: node:20-trixie
+      options: --user root
+    steps:
+      - name: Install git and GitHub CLI
+        run: apt-get update && apt-get install -y git ca-certificates gh
+
+      - uses: actions/checkout@v4
+
+      - name: Clean install
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish dist for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          tarball="broker-dist-${sha}.tar.gz"
+          tar -czf "$tarball" dist
+          sha256sum "$tarball" | awk '{ print $1 }' > "${tarball}.sha256"
+          if ! gh release view dist >/dev/null 2>&1; then
+            gh release create dist --title "Broker dist" --notes "Prebuilt broker dist. One tarball per commit, named broker-dist-<sha>.tar.gz."
+          fi
+          gh release upload dist "$tarball" "${tarball}.sha256" --clobber
