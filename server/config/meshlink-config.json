@@ -18,10 +18,10 @@
         "fiatPrice": 0,
         "dataLimitMB": 500,
         "durationHours": 24,
-        "speedMbps": 1,
+        "speedMbps": 5,
         "features": [
           "500MB daily limit",
-          "1 Mbps speed",
+          "5 Mbps up and down",
           "Web browsing & messaging"
         ],
         "buttonText": "Connect Free",

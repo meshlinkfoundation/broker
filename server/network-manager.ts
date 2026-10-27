@@ -11,9 +11,6 @@ export class NetworkManager {
   private readonly WLAN_IFACE = this.getWifiInterface();
   private readonly TOTAL_BANDWIDTH_MBIT = 300;
   private readonly CAPTIVE_PORTAL_SPEED_MBIT = 20;
-  // The captive portal keeps advertising each tier's speed. Enforcement on the
-  // gateway radio is never below this, because the HaLow extenders are not shaped.
-  private readonly ENFORCED_MIN_SPEED_MBPS = 80;
   private readonly WAN_IFACE = this.getWanInterface();
   private readonly usageCounters = new Map<string, { counter: number; total: number }>();
 
@@ -118,6 +115,11 @@ export class NetworkManager {
         `/usr/sbin/tc qdisc add dev ${this.WLAN_IFACE} parent 1:9999 handle 9999: sfq perturb 10`
       );
 
+      // Ingress qdisc so each client's upload can be capped at the same rate
+      // as the download class on the way back out to the radio.
+      await this.sudoExec(`/usr/sbin/tc qdisc del dev ${this.WLAN_IFACE} ingress 2>/dev/null || true`);
+      await this.sudoExec(`/usr/sbin/tc qdisc add dev ${this.WLAN_IFACE} handle ffff: ingress`);
+
       this.tcInitialized = true;
       console.log('[NetworkManager] Traffic control initialized (HTB on ' + this.WLAN_IFACE + ')');
     } catch (error) {
@@ -141,28 +143,32 @@ export class NetworkManager {
 
     const classHex = lastOctet.toString(16);
     const prio = lastOctet;
-    const rate = Math.max(this.ENFORCED_MIN_SPEED_MBPS, Math.floor(speedMbps));
+    const rate = Math.max(1, Math.floor(speedMbps));
+    const burstKb = Math.max(64, rate * 8);
 
     // Remove any existing rules for this IP first (idempotent)
     await this.removeSpeedLimit(normalizedIp);
 
     try {
-      // Per-client HTB class
+      // Download: packets leaving the radio toward this client.
       await this.sudoExec(
         `/usr/sbin/tc class add dev ${this.WLAN_IFACE} parent 1:1 classid 1:${classHex} htb rate ${rate}mbit ceil ${rate}mbit`
       );
 
-      // SFQ leaf qdisc for fairness
       await this.sudoExec(
         `/usr/sbin/tc qdisc add dev ${this.WLAN_IFACE} parent 1:${classHex} handle ${lastOctet}: sfq perturb 10`
       );
 
-      // u32 filter matching dst IP
       await this.sudoExec(
         `/usr/sbin/tc filter add dev ${this.WLAN_IFACE} parent 1:0 protocol ip prio ${prio} u32 match ip dst ${normalizedIp}/32 flowid 1:${classHex}`
       );
 
-      console.log(`[NetworkManager] tc: ${normalizedIp} capped at ${rate}Mbps (class 1:${classHex})`);
+      // Upload: packets arriving from this client.
+      await this.sudoExec(
+        `/usr/sbin/tc filter add dev ${this.WLAN_IFACE} parent ffff: protocol ip prio ${prio} u32 match ip src ${normalizedIp}/32 police rate ${rate}mbit burst ${burstKb}k drop`
+      );
+
+      console.log(`[NetworkManager] tc: ${normalizedIp} capped at ${rate}Mbps up and down`);
     } catch (error) {
       console.error(`[NetworkManager] Failed to set speed limit for ${normalizedIp}:`, error);
     }
@@ -183,6 +189,10 @@ export class NetworkManager {
     // Delete filter, leaf qdisc, class — each may not exist, so catch individually
     await this.sudoExec(
       `/usr/sbin/tc filter del dev ${this.WLAN_IFACE} parent 1:0 protocol ip prio ${prio} u32`
+    ).catch(() => {});
+
+    await this.sudoExec(
+      `/usr/sbin/tc filter del dev ${this.WLAN_IFACE} parent ffff: protocol ip prio ${prio} u32`
     ).catch(() => {});
 
     await this.sudoExec(
