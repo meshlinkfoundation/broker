@@ -44,14 +44,14 @@ Cancels temporary access timer
 1. Log in to your [Stripe Dashboard](https://dashboard.stripe.com)
 2. Toggle **"Test mode"** on (top-right) for testing
 3. Go to **Developers > API keys**
-4. Copy your **Secret key** — it starts with `sk_test_...`
+4. Copy your **Secret key** while test mode is on. Do not commit it.
 
 ### 3. Configure the Broker
 
 Create a `.env` file in the `broker/` directory:
 
 ```bash
-echo "STRIPE_SECRET_KEY=sk_test_yourKeyHere" > broker/.env
+echo "STRIPE_SECRET_KEY=<your-stripe-test-secret-key>" > broker/.env
 ```
 
 The broker reads `STRIPE_SECRET_KEY` from the environment on each checkout request. On the Pi, the systemd service loads this file automatically via `EnvironmentFile`.
@@ -134,7 +134,7 @@ The broker retrieves the Stripe session and verifies `payment_status === 'paid'`
 ## Testing
 
 ### Test Mode
-1. Set `STRIPE_SECRET_KEY` to your `sk_test_...` key
+1. Set `STRIPE_SECRET_KEY` to your test-mode secret key
 2. Use Stripe's test card numbers:
    - **Success:** `4242 4242 4242 4242`
    - **Decline:** `4000 0000 0000 0002`
@@ -144,7 +144,7 @@ The broker retrieves the Stripe session and verifies `payment_status === 'paid'`
 
 ### Live Mode
 1. Complete Stripe account verification
-2. Switch to your `sk_live_...` secret key in `.env`
+2. Switch `STRIPE_SECRET_KEY` in `.env` to your live secret key
 3. Real payments will be processed
 
 ## Payment Method Configuration
@@ -190,7 +190,7 @@ EnvironmentFile=-/path/to/broker/.env
 The `-` prefix means "don't fail if the file doesn't exist" (Stripe is optional). Just create the `.env` file and restart the broker:
 
 ```bash
-echo "STRIPE_SECRET_KEY=sk_test_yourKeyHere" > /home/meshlink/meshlink/broker/.env
+echo "STRIPE_SECRET_KEY=<your-stripe-test-secret-key>" > /home/meshlink/meshlink/broker/.env
 sudo systemctl restart meshlink-broker
 ```
 
@@ -201,7 +201,7 @@ The Pi is behind NAT with no public IP, so Stripe can't push webhook events to i
 ## Troubleshooting
 
 ### "Stripe is not configured" error
-- Check that `broker/.env` contains `STRIPE_SECRET_KEY=sk_test_...`
+- Check that `broker/.env` contains `STRIPE_SECRET_KEY` set to your Stripe secret key
 - Restart the broker: `sudo systemctl restart meshlink-broker`
 
 ### Client can't reach Stripe checkout
