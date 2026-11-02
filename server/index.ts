@@ -3,6 +3,8 @@ import { createServer as createHttpsServer } from "https";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static";
+import { startTollgateServer } from "./tollgate/routes";
+import { startUpstream, upstreamStatus } from "./tollgate/upstream";
 import {
   getPortalTls,
   guestAdminGuard,
@@ -47,6 +49,10 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/api/meshlink/upstream", (_req, res) => {
+  res.json(upstreamStatus());
+});
+
 (async () => {
   const server = await registerRoutes(app);
 
@@ -76,6 +82,14 @@ app.use((req, res, next) => {
   }, () => {
     log(`serving on port ${port}`);
   });
+
+  const dataDir = process.env.MESHLINK_TOLLGATE_DATA_DIR || "server/data";
+  try {
+    await startTollgateServer();
+  } catch (error) {
+    console.error("[Tollgate] failed to start:", error);
+  }
+  startUpstream(dataDir);
 
   const tls = getPortalTls();
   if (tls.enabled && tls.credentials) {

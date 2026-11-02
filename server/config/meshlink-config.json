@@ -133,8 +133,40 @@
       }
     }
   },
+  "tollgate": {
+    "enabled": true,
+    "metric": "milliseconds",
+    "stepSize": 600000,
+    "pricePerStep": 1,
+    "unit": "sat",
+    "mintUrl": "http://10.99.98.2:8383",
+    "minSteps": 1,
+    "maxSteps": 100,
+    "deviceIdentifier": "mac",
+    "tips": [],
+    "port": 2121,
+    "dataDir": "server/data",
+    "_note": "Sell-side TollGate merchant. Price is in sats per step; clients pay minSteps or more. Set enabled=false or MESHLINK_TOLLGATE_ENABLED=false to turn it off."
+  },
   "admin": {
     "password": "admin",
     "dashboardEnabled": true
+  },
+  "upstream": {
+    "enabled": false,
+    "url": "",
+    "unit": "sat",
+    "steps": 1,
+    "maxPricePerStep": 10,
+    "maxCostPerMinute": 2,
+    "dailyBudget": 100,
+    "renewAtPercent": 80,
+    "autoMint": false,
+    "pollIntervalMs": 60,
+    "_note": "Buy-side: discover a TollGate on the WAN gateway (:2121), pay Cashu, renew. autoMint is for the FakeWallet lab only.",
+    "routeThrough": false,
+    "routeTable": 2121,
+    "routeNexthop": "",
+    "guestInterface": "br-guest"
   }
 }
